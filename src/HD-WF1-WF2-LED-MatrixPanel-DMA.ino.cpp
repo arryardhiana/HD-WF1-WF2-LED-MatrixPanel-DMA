@@ -29,7 +29,7 @@
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
-//#include <ElegantOTA.h> // upload firmware by going to http://<ipaddress>/update
+#include <ElegantOTA.h> // upload firmware by going to http://<ipaddress>/update
 
 #include <ESP32Time.h>
 #include <Bounce2.h>
@@ -42,8 +42,8 @@
 
 /*----------------------------- Wifi Configuration -------------------------------*/
 
-const char *wifi_ssid = "xxxx";
-const char *wifi_pass = "yyyy";
+const char *wifi_ssid = "IoT";
+const char *wifi_pass = "iotUnp4d";
 
 /*----------------------------- RTC and NTP -------------------------------*/
 
@@ -60,7 +60,7 @@ const char* ntpLastUpdate     = "/ntp_last_update.txt";
 #define PANEL_CHAIN 2      // Total number of panels chained one to another
 
 // Keep this true while validating panel offset/wiring for 2x P5 64x32 modules.
-constexpr bool DEMO_TEXT_MODE = true;
+constexpr bool DEMO_TEXT_MODE = false;
 // 0=landscape default, 1=portrait clockwise, 2=landscape flipped, 3=portrait counter-clockwise
 constexpr uint8_t DEMO_ROTATION = 0;
 constexpr PANEL_CHAIN_TYPE DEMO_CHAIN_TYPE = CHAIN_TOP_LEFT_DOWN;
@@ -68,6 +68,7 @@ constexpr uint8_t DEMO_PIXEL_BASE = 64; // tune 1/8-scan remap boundary to preve
 constexpr HUB75_I2S_CFG::clk_speed DEMO_I2S_SPEED = HUB75_I2S_CFG::HZ_8M;
 constexpr uint8_t DEMO_LATCH_BLANKING = 6;
 constexpr bool DEMO_CLKPHASE = false;
+constexpr bool ENABLE_BUTTON_SLEEP = false; // WF2: button pin overlaps panel data pin on X1
 
 
 #if defined(WF1)
@@ -143,6 +144,7 @@ String customTextMessage = "WF2 Matrix";
 int customTextScrollX = PANEL_RES_X;
 unsigned long lastCustomScrollUpdate = 0;
 bool customTextNeedsRefresh = true;
+bool littleFsReady = false;
 
 unsigned long last_update = 0;
 char buffer[64];
@@ -271,6 +273,9 @@ void resetCustomTextScroll() {
 }
 
 void loadCustomTextMessage() {
+  if (!littleFsReady) {
+    return;
+  }
   if (!fs.exists(CUSTOM_TEXT_FILE)) {
     customTextNeedsRefresh = true;
     resetCustomTextScroll();
@@ -302,6 +307,9 @@ void loadCustomTextMessage() {
 }
 
 void saveCustomTextMessage(const String &text) {
+  if (!littleFsReady) {
+    return;
+  }
   File file = fs.open(CUSTOM_TEXT_FILE, FILE_WRITE);
   if (!file) {
     Serial.println("Failed to save custom text");
@@ -614,16 +622,18 @@ void setup() {
 
   /*-------------------- START THE NETWORKING --------------------*/
   WiFi.mode(WIFI_STA);
-  wifiMulti.addAP(wifi_ssid, wifi_pass); // configure in the *-config.h file
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+  WiFi.begin(wifi_ssid, wifi_pass);
 
   // wait for WiFi connection, but bail out after a timeout so the clock still runs offline
   Serial.print("Waiting for WiFi to connect");
   unsigned long wifiStart = millis();
-  wl_status_t wifiStatus = static_cast<wl_status_t>(wifiMulti.run());
+  wl_status_t wifiStatus = static_cast<wl_status_t>(WiFi.status());
   while (wifiStatus != WL_CONNECTED && (millis() - wifiStart) < WIFI_CONNECT_TIMEOUT_MS) {
     Serial.print(".");
     delay(250);
-    wifiStatus = static_cast<wl_status_t>(wifiMulti.run());
+    wifiStatus = static_cast<wl_status_t>(WiFi.status());
   }
   wifiConnected = (wifiStatus == WL_CONNECTED);
   if (wifiConnected) {
@@ -666,9 +676,11 @@ void setup() {
 
   /*-------------------- --------------- --------------------*/
   // BUTTON SETUP 
-  button.attach( PUSH_BUTTON_PIN, INPUT ); // USE EXTERNAL PULL-UP
-  button.interval(5);   // DEBOUNCE INTERVAL IN MILLISECONDS
-  button.setPressedState(LOW); // INDICATE THAT THE LOW STATE CORRESPONDS TO PHYSICALLY PRESSING THE BUTTON
+  if (ENABLE_BUTTON_SLEEP) {
+    button.attach( PUSH_BUTTON_PIN, INPUT ); // USE EXTERNAL PULL-UP
+    button.interval(5);   // DEBOUNCE INTERVAL IN MILLISECONDS
+    button.setPressedState(LOW); // INDICATE THAT THE LOW STATE CORRESPONDS TO PHYSICALLY PRESSING THE BUTTON
+  }
 
 
   /*-------------------- LEDC Controller --------------------*/
@@ -707,12 +719,13 @@ void setup() {
     
 
   /*-------------------- INIT LITTLE FS --------------------*/
-  if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
-      Serial.println("LittleFS Mount Failed");
-      return;
+  littleFsReady = LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED);
+  if(!littleFsReady){
+      Serial.println("LittleFS Mount Failed, continue without FS features");
+  } else {
+      listDir(LittleFS, "/", 1);
+      loadCustomTextMessage();
   }
-  listDir(LittleFS, "/", 1);    
-  loadCustomTextMessage();
  
   /*-------------------- --------------- --------------------*/
   // Init I2C for RTC
@@ -739,14 +752,16 @@ void setup() {
   }
   
   time_t ntp_last_update_ts = 0;
-  File file = fs.open(ntpLastUpdate, FILE_READ, true);
-  if(!file) {
-      Serial.println("NTP last update file not found - will perform NTP sync");
-  } else  {
-      file.read( (uint8_t*) &ntp_last_update_ts, sizeof(ntp_last_update_ts));          
-      Serial.print("NTP last update epoch: ");
-      Serial.println(ntp_last_update_ts);
-      file.close();      
+  if (littleFsReady) {
+    File file = fs.open(ntpLastUpdate, FILE_READ, true);
+    if(!file) {
+        Serial.println("NTP last update file not found - will perform NTP sync");
+    } else  {
+        file.read( (uint8_t*) &ntp_last_update_ts, sizeof(ntp_last_update_ts));          
+        Serial.print("NTP last update epoch: ");
+        Serial.println(ntp_last_update_ts);
+        file.close();      
+    }
   }
 
   // Current RTC time (include time components for better comparison)
@@ -824,7 +839,7 @@ void setup() {
 
       // Save NTP update timestamp
       ntp_last_update_ts = getEpochTime();
-      if (ntp_last_update_ts > 0) {
+      if (littleFsReady && ntp_last_update_ts > 0) {
         File file = fs.open(ntpLastUpdate, FILE_WRITE);
         if(!file) {
             Serial.println("Failed to open NTP timestamp file for writing");
@@ -854,7 +869,7 @@ void setup() {
     webServer.on("/text", HTTP_GET, handleCustomTextGet);
     webServer.on("/text", HTTP_POST, handleCustomTextPost);
 
-    //ElegantOTA.begin(&webServer);    // Start ElegantOTA
+    ElegantOTA.begin(&webServer);    // Start ElegantOTA
     webServer.begin();
     Serial.println("OTA HTTP server started");
 
@@ -880,41 +895,43 @@ void loop()
         return;
     }
 
-    // YOU MUST CALL THIS EVERY LOOP
-    button.update();
+    if (ENABLE_BUTTON_SLEEP) {
+        // YOU MUST CALL THIS EVERY LOOP
+        button.update();
 
-    // Handle button press logic
-    if (button.pressed() && !buttonPressHandled) {
-        buttonPressStartTime = millis();
-        buttonPressHandled = false;
-        Serial.println("Button pressed");
-    }
-    
-    if (button.isPressed() && !buttonPressHandled) {
-        // Check if button has been held for more than 2 seconds
-        if (millis() - buttonPressStartTime > 2000) {
-            Serial.println("Button held for >2s - going to sleep");
-            esp_deep_sleep_start();
-            buttonPressHandled = true;
+        // Handle button press logic
+        if (button.pressed() && !buttonPressHandled) {
+            buttonPressStartTime = millis();
+            buttonPressHandled = false;
+            Serial.println("Button pressed");
         }
-    }
-    
-    if (button.released() && !buttonPressHandled) {
-        // Button was released before 2 seconds - cycle display mode
-        if (millis() - buttonPressStartTime < 2000) {
-            currentDisplayMode = (DisplayMode)((currentDisplayMode + 1) % MODE_COUNT);
-            Serial.print("Switched to display mode: ");
-            Serial.println(currentDisplayMode);
-            
-            // Clear screen when switching modes
-            dma_display->clearScreen();
-            
-            // If switching to bouncing squares, reinitialize them
-            if (currentDisplayMode == MODE_BOUNCING_SQUARES) {
-                initBouncingSquares();
+        
+        if (button.isPressed() && !buttonPressHandled) {
+            // Check if button has been held for more than 2 seconds
+            if (millis() - buttonPressStartTime > 2000) {
+                Serial.println("Button held for >2s - going to sleep");
+                esp_deep_sleep_start();
+                buttonPressHandled = true;
             }
         }
-        buttonPressHandled = true;
+        
+        if (button.released() && !buttonPressHandled) {
+            // Button was released before 2 seconds - cycle display mode
+            if (millis() - buttonPressStartTime < 2000) {
+                currentDisplayMode = (DisplayMode)((currentDisplayMode + 1) % MODE_COUNT);
+                Serial.print("Switched to display mode: ");
+                Serial.println(currentDisplayMode);
+                
+                // Clear screen when switching modes
+                dma_display->clearScreen();
+                
+                // If switching to bouncing squares, reinitialize them
+                if (currentDisplayMode == MODE_BOUNCING_SQUARES) {
+                    initBouncingSquares();
+                }
+            }
+            buttonPressHandled = true;
+        }
     }
 
     webServer.handleClient();
@@ -925,8 +942,8 @@ void loop()
         return;
     }
 
-    // keep WiFiMulti state fresh without blocking the UI
-    wl_status_t runtimeStatus = static_cast<wl_status_t>(wifiMulti.run());
+    // keep WiFi status fresh without blocking the UI
+    wl_status_t runtimeStatus = static_cast<wl_status_t>(WiFi.status());
     bool currentlyConnected = (runtimeStatus == WL_CONNECTED);
     if (currentlyConnected != wifiConnected) {
         wifiConnected = currentlyConnected;
@@ -936,6 +953,7 @@ void loop()
             showIPAddress(WiFi.localIP(), "WiFi IP");
         } else {
             Serial.println("WiFi disconnected");
+            WiFi.reconnect();
             flashStatusMessage("WiFi LOST", dma_display->color565(255, 120, 80), 800);
         }
     }
