@@ -28,6 +28,7 @@
 #include <I2C_BM8563.h>   // https://github.com/tanakamasayuki/I2C_BM8563
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
+#include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
 //#include <ElegantOTA.h> // upload firmware by going to http://<ipaddress>/update
 
 #include <ESP32Time.h>
@@ -56,7 +57,17 @@ const char* ntpLastUpdate     = "/ntp_last_update.txt";
 /*-------------------------- HUB75E DMA Setup -----------------------------*/
 #define PANEL_RES_X 64      // Number of pixels wide of each INDIVIDUAL panel module. 
 #define PANEL_RES_Y 32     // Number of pixels tall of each INDIVIDUAL panel module.
-#define PANEL_CHAIN 1      // Total number of panels chained one to another
+#define PANEL_CHAIN 2      // Total number of panels chained one to another
+
+// Keep this true while validating panel offset/wiring for 2x P5 64x32 modules.
+constexpr bool DEMO_TEXT_MODE = true;
+// 0=landscape default, 1=portrait clockwise, 2=landscape flipped, 3=portrait counter-clockwise
+constexpr uint8_t DEMO_ROTATION = 0;
+constexpr PANEL_CHAIN_TYPE DEMO_CHAIN_TYPE = CHAIN_TOP_LEFT_DOWN;
+constexpr uint8_t DEMO_PIXEL_BASE = 64; // tune 1/8-scan remap boundary to prevent first-column color bleed
+constexpr HUB75_I2S_CFG::clk_speed DEMO_I2S_SPEED = HUB75_I2S_CFG::HZ_8M;
+constexpr uint8_t DEMO_LATCH_BLANKING = 6;
+constexpr bool DEMO_CLKPHASE = false;
 
 
 #if defined(WF1)
@@ -79,6 +90,7 @@ WebServer           webServer;
 WiFiMulti           wifiMulti;
 ESP32Time           esp32rtc;  // offset in seconds GMT+1
 MatrixPanel_I2S_DMA *dma_display = nullptr;
+VirtualMatrixPanel  *virtual_display = nullptr;
 
 // INSTANTIATE A Button OBJECT FROM THE Bounce2 NAMESPACE
 Bounce2::Button button = Bounce2::Button();
@@ -99,7 +111,7 @@ enum DisplayMode {
   MODE_COUNT = 3
 };
 
-DisplayMode currentDisplayMode = MODE_CLOCK_WITH_ANIMATION;
+DisplayMode currentDisplayMode = MODE_CLOCK_ONLY;
 unsigned long buttonPressStartTime = 0;
 bool buttonPressHandled = false;
 volatile bool buttonPressed = false;
@@ -114,6 +126,29 @@ struct BouncingSquare {
 
 const int NUM_SQUARES = 3;
 BouncingSquare squares[NUM_SQUARES];
+
+constexpr const char* kDayNames[]   = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+constexpr const char* kMonthNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+bool wifiConnected = false;
+bool isAccessPointMode = false;
+
+const char* ACCESS_POINT_SSID = "IoT";
+const char* ACCESS_POINT_PASS = "iotUnp4d";
+const char* CUSTOM_TEXT_FILE = "/custom_text.txt";
+
+String customTextMessage = "WF2 Matrix";
+int customTextScrollX = PANEL_RES_X;
+unsigned long lastCustomScrollUpdate = 0;
+bool customTextNeedsRefresh = true;
+
+unsigned long last_update = 0;
+char buffer[64];
+
+unsigned long demoLastTick = 0;
+bool demoNeedsRedraw = true;
 
 IRAM_ATTR void toggleButtonPressed() {
   // This function will be called when the interrupt occurs on pin PUSH_BUTTON_PIN
@@ -154,6 +189,255 @@ void updateBouncingSquares() {
     
     // Draw square
     dma_display->fillRect((int)squares[i].x, (int)squares[i].y, squares[i].size, squares[i].size, squares[i].color);
+  }
+}
+
+// Display short status text so the user knows WiFi state transitions.
+void flashStatusMessage(const char* message, uint16_t color, uint16_t holdMs = 1200) {
+  if (!dma_display) {
+    return;
+  }
+  dma_display->clearScreen();
+  dma_display->setFont(nullptr);
+  dma_display->setTextWrap(false);
+  dma_display->setTextSize(1);
+  dma_display->setCursor(2, 10);
+  dma_display->setTextColor(color);
+  dma_display->print(message);
+  delay(holdMs);
+  dma_display->clearScreen();
+}
+
+void showIPAddress(const IPAddress &ip, const char* label) {
+  if (!dma_display) {
+    return;
+  }
+  dma_display->clearScreen();
+  dma_display->setFont(nullptr);
+  dma_display->setTextWrap(false);
+  dma_display->setTextSize(1);
+  dma_display->setTextColor(dma_display->color565(255, 255, 255));
+  dma_display->setCursor(0, 2);
+  dma_display->print(label);
+  dma_display->setCursor(0, 14);
+  dma_display->print(ip);
+  delay(3000);
+  dma_display->clearScreen();
+}
+
+void initOffsetDemo() {
+  demoLastTick = 0;
+  demoNeedsRedraw = true;
+  if (virtual_display) {
+    virtual_display->clearScreen();
+  } else {
+    dma_display->clearScreen();
+  }
+}
+
+void updateOffsetDemo() {
+  const bool useVirtual = (virtual_display != nullptr);
+  const int totalWidth = useVirtual ? virtual_display->width() : dma_display->width();
+  const int totalHeight = useVirtual ? virtual_display->height() : dma_display->height();
+  if (!demoNeedsRedraw) {
+    return;
+  }
+  if ((millis() - demoLastTick) < 120) {
+    return;
+  }
+  demoLastTick = millis();
+  demoNeedsRedraw = false;
+
+  if (useVirtual) virtual_display->clearScreen(); else dma_display->clearScreen();
+
+  // Solid color test: P1 full red, P2 full green.
+  const uint16_t red = useVirtual ? virtual_display->color565(255, 0, 0) : dma_display->color565(255, 0, 0);
+  const uint16_t green = useVirtual ? virtual_display->color565(0, 255, 0) : dma_display->color565(0, 255, 0);
+  const int panelSplitX = PANEL_RES_X;
+  const int panel2Width = totalWidth - panelSplitX;
+
+  if (useVirtual) {
+    virtual_display->fillRect(0, 0, panelSplitX, totalHeight, red);
+    virtual_display->fillRect(panelSplitX, 0, panel2Width, totalHeight, green);
+  } else {
+    dma_display->fillRect(0, 0, panelSplitX, totalHeight, red);
+    dma_display->fillRect(panelSplitX, 0, panel2Width, totalHeight, green);
+  }
+}
+
+void resetCustomTextScroll() {
+  customTextScrollX = PANEL_RES_X;
+  lastCustomScrollUpdate = 0;
+}
+
+void loadCustomTextMessage() {
+  if (!fs.exists(CUSTOM_TEXT_FILE)) {
+    customTextNeedsRefresh = true;
+    resetCustomTextScroll();
+    return;
+  }
+
+  File file = fs.open(CUSTOM_TEXT_FILE, FILE_READ);
+  if (!file) {
+    Serial.println("Failed to open custom text file");
+    return;
+  }
+
+  String stored = file.readString();
+  file.close();
+  stored.replace("\r", " ");
+  stored.replace("\n", " ");
+  stored.trim();
+
+  if (stored.length() == 0) {
+    stored = "WF2 Matrix";
+  } else if (stored.length() > 96) {
+    stored = stored.substring(0, 96);
+  }
+
+  customTextMessage = stored;
+  customTextNeedsRefresh = true;
+  resetCustomTextScroll();
+  Serial.printf("Loaded custom text: %s\n", customTextMessage.c_str());
+}
+
+void saveCustomTextMessage(const String &text) {
+  File file = fs.open(CUSTOM_TEXT_FILE, FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to save custom text");
+    return;
+  }
+  file.print(text);
+  file.close();
+  Serial.println("Custom text saved");
+}
+
+void startAccessPointMode() {
+  Serial.println("Starting Access Point mode...");
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.mode(WIFI_AP);
+  if (WiFi.softAP(ACCESS_POINT_SSID, ACCESS_POINT_PASS)) {
+    isAccessPointMode = true;
+    IPAddress ip = WiFi.softAPIP();
+    Serial.print("AP SSID: ");
+    Serial.println(ACCESS_POINT_SSID);
+    Serial.print("AP IP: ");
+    Serial.println(ip);
+    flashStatusMessage("AP: IoT", dma_display->color565(255, 255, 0));
+    flashStatusMessage("PASS: iotUnp4d", dma_display->color565(255, 180, 0));
+    showIPAddress(ip, "AP IP");
+    customTextNeedsRefresh = true;
+    resetCustomTextScroll();
+  } else {
+    Serial.println("Failed to start AP");
+  }
+}
+
+void handleRootRequest() {
+  String status = wifiConnected ? "CONNECTED" : (isAccessPointMode ? "AP MODE" : "OFFLINE");
+  String htmlSafe = customTextMessage;
+  htmlSafe.replace("&", "&amp;");
+  htmlSafe.replace("<", "&lt;");
+  htmlSafe.replace(">", "&gt;");
+  htmlSafe.replace("\"", "&quot;");
+  String page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>WF2 Matrix Config</title>
+    <style>
+      body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0;padding:20px;}
+      .card{max-width:420px;margin:auto;background:#1f1f1f;border-radius:12px;padding:24px;box-shadow:0 0 20px rgba(0,0,0,.45);}
+      label{display:block;margin-bottom:8px;font-weight:600;}
+      input[type=text]{width:100%;padding:10px;border-radius:6px;border:none;margin-bottom:16px;font-size:16px;}
+      button{background:#00c853;border:none;padding:10px 16px;color:#fff;border-radius:6px;font-size:15px;cursor:pointer;}
+      .status{margin-bottom:16px;font-size:14px;color:#9e9e9e;}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>WF2 Matrix Config</h2>
+      <p class="status">WiFi Status: %STATUS%</p>
+      <form method="POST" action="/text">
+        <label for="text">Custom Text</label>
+        <input type="text" id="text" name="text" value="%TEXT%" maxlength="96" />
+        <button type="submit">Save Text</button>
+      </form>
+    </div>
+  </body>
+</html>
+)rawliteral";
+  page.replace("%STATUS%", status);
+  page.replace("%TEXT%", htmlSafe);
+  webServer.send(200, "text/html", page);
+}
+
+void handleCustomTextPost() {
+  if (!webServer.hasArg("text")) {
+    webServer.send(400, "text/plain", "Missing text parameter");
+    return;
+  }
+
+  String newText = webServer.arg("text");
+  newText.replace("\r", " ");
+  newText.replace("\n", " ");
+  newText.trim();
+  if (newText.length() == 0) {
+    newText = "WF2 Matrix";
+  } else if (newText.length() > 96) {
+    newText = newText.substring(0, 96);
+  }
+
+  customTextMessage = newText;
+  saveCustomTextMessage(customTextMessage);
+  customTextNeedsRefresh = true;
+  resetCustomTextScroll();
+  webServer.send(200, "text/plain", "OK");
+}
+
+void handleCustomTextGet() {
+  String escaped = customTextMessage;
+  escaped.replace("\"", "\\\"");
+  String json = "{\"text\":\"" + escaped + "\",\"apMode\":" + String(isAccessPointMode ? "true" : "false") + "}";
+  webServer.send(200, "application/json", json);
+}
+
+void updateCustomTextDisplay() {
+  if (!isAccessPointMode || !dma_display) {
+    return;
+  }
+
+  if (customTextNeedsRefresh) {
+    dma_display->clearScreen();
+    customTextNeedsRefresh = false;
+    resetCustomTextScroll();
+  }
+
+  const unsigned long scrollInterval = 70;
+  if ((millis() - lastCustomScrollUpdate) < scrollInterval) {
+    return;
+  }
+
+  lastCustomScrollUpdate = millis();
+
+  dma_display->clearScreen();
+  dma_display->setFont(nullptr);
+  dma_display->setTextSize(1);
+  dma_display->setTextWrap(false);
+  dma_display->setCursor(customTextScrollX, 12);
+  dma_display->setTextColor(dma_display->color565(0, 200, 255));
+  dma_display->print(customTextMessage);
+
+  int approxWidth = customTextMessage.length() * 6;
+  if (approxWidth < PANEL_RES_X / 2) {
+    approxWidth = PANEL_RES_X / 2;
+  }
+
+  customTextScrollX -= 1;
+  if (customTextScrollX < -approxWidth) {
+    customTextScrollX = PANEL_RES_X;
   }
 }
 
@@ -260,6 +544,17 @@ void updateClockOnly();
 void updateClockOverlay();
 void initBouncingSquares();
 void updateBouncingSquares();
+void updateCustomTextDisplay();
+void resetCustomTextScroll();
+void loadCustomTextMessage();
+void saveCustomTextMessage(const String &text);
+void startAccessPointMode();
+void showIPAddress(const IPAddress &ip, const char* label);
+void handleRootRequest();
+void handleCustomTextPost();
+void handleCustomTextGet();
+void initOffsetDemo();
+void updateOffsetDemo();
 
 //
 // Arduino Setup Task
@@ -274,14 +569,15 @@ void setup() {
     
     // Module configuration
     HUB75_I2S_CFG mxconfig(
-      PANEL_RES_X,   // module width
-      PANEL_RES_Y,   // module height
+      DEMO_TEXT_MODE ? (PANEL_RES_X * 2) : PANEL_RES_X,   // 1/8 scan needs electrical width x2
+      DEMO_TEXT_MODE ? (PANEL_RES_Y / 2) : PANEL_RES_Y,   // 1/8 scan needs electrical height /2
       PANEL_CHAIN,   // Chain length
       _pins_x1       // pin mapping for port X1
     );
-    mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_20M;  
-    mxconfig.latch_blanking = 4;
-    //mxconfig.clkphase = false;
+    mxconfig.i2sspeed = DEMO_TEXT_MODE ? DEMO_I2S_SPEED : HUB75_I2S_CFG::HZ_20M;
+    mxconfig.latch_blanking = DEMO_TEXT_MODE ? DEMO_LATCH_BLANKING : 4;
+    mxconfig.min_refresh_rate = 120;
+    mxconfig.clkphase = DEMO_TEXT_MODE ? DEMO_CLKPHASE : true;
     //mxconfig.driver = HUB75_I2S_CFG::FM6126A;
     //mxconfig.double_buff = false;  
     //mxconfig.min_refresh_rate = 30;
@@ -290,8 +586,13 @@ void setup() {
     // Display Setup
     dma_display = new MatrixPanel_I2S_DMA(mxconfig);
     dma_display->begin();
+    dma_display->setRotation(DEMO_ROTATION);
     dma_display->setBrightness8(128); //0-255
     dma_display->clearScreen();
+    dma_display->setFont(nullptr);
+    dma_display->setTextSize(1);
+    dma_display->setTextWrap(false);
+    dma_display->setTextColor(dma_display->color565(255, 255, 255));
 
     dma_display->fillScreenRGB888(255,0,0);
     delay(1000);
@@ -300,19 +601,38 @@ void setup() {
     dma_display->fillScreenRGB888(0,0,255);
     delay(1000);       
     dma_display->clearScreen();
-    dma_display->print("Connecting");     
+    dma_display->print("Connecting");
+
+    if (DEMO_TEXT_MODE) {
+      virtual_display = new VirtualMatrixPanel((*dma_display), 1, PANEL_CHAIN, PANEL_RES_X, PANEL_RES_Y, DEMO_CHAIN_TYPE);
+      virtual_display->setPhysicalPanelScanRate(FOUR_SCAN_32PX_HIGH, DEMO_PIXEL_BASE);
+      virtual_display->setRotation(DEMO_ROTATION);
+      initOffsetDemo();
+      return;
+    }
 
 
   /*-------------------- START THE NETWORKING --------------------*/
   WiFi.mode(WIFI_STA);
   wifiMulti.addAP(wifi_ssid, wifi_pass); // configure in the *-config.h file
 
-  // wait for WiFi connection
-  Serial.print("Waiting for WiFi to connect...");
-  while (wifiMulti.run() != WL_CONNECTED) {
+  // wait for WiFi connection, but bail out after a timeout so the clock still runs offline
+  Serial.print("Waiting for WiFi to connect");
+  unsigned long wifiStart = millis();
+  wl_status_t wifiStatus = static_cast<wl_status_t>(wifiMulti.run());
+  while (wifiStatus != WL_CONNECTED && (millis() - wifiStart) < WIFI_CONNECT_TIMEOUT_MS) {
     Serial.print(".");
+    delay(250);
+    wifiStatus = static_cast<wl_status_t>(wifiMulti.run());
   }
-  Serial.println(" connected");
+  wifiConnected = (wifiStatus == WL_CONNECTED);
+  if (wifiConnected) {
+    Serial.println(" connected");
+  } else {
+    Serial.println(" failed (timeout)");
+    flashStatusMessage("WiFi FAIL", dma_display->color565(255, 80, 80));
+    startAccessPointMode();
+  }
     
 
   /*-------------------- --------------- --------------------*/
@@ -392,6 +712,7 @@ void setup() {
       return;
   }
   listDir(LittleFS, "/", 1);    
+  loadCustomTextMessage();
  
   /*-------------------- --------------- --------------------*/
   // Init I2C for RTC
@@ -529,36 +850,36 @@ void setup() {
 
    /*-------------------- --------------- --------------------*/
 
-    webServer.on("/", []() {
-      webServer.send(200, "text/plain", "Hi! I am here.");
-    });
+    webServer.on("/", HTTP_GET, handleRootRequest);
+    webServer.on("/text", HTTP_GET, handleCustomTextGet);
+    webServer.on("/text", HTTP_POST, handleCustomTextPost);
 
     //ElegantOTA.begin(&webServer);    // Start ElegantOTA
     webServer.begin();
     Serial.println("OTA HTTP server started");
 
     /*-------------------- --------------- --------------------*/
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());  
+    if (wifiConnected) {
+      flashStatusMessage("WiFi OK", dma_display->color565(0, 255, 120));
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());  
 
-    delay(1000);
-    
-    dma_display->clearScreen();
-    dma_display->setCursor(0,0);
-
-    dma_display->print(WiFi.localIP());
-    dma_display->clearScreen();
-    delay(3000);
+      delay(500);
+      showIPAddress(WiFi.localIP(), "WiFi IP");
+    }
 
     // Initialize bouncing squares for animation mode
     initBouncingSquares();
 
 }
 
-unsigned long last_update = 0;
-char buffer[64];
 void loop() 
 {
+    if (DEMO_TEXT_MODE) {
+        updateOffsetDemo();
+        return;
+    }
+
     // YOU MUST CALL THIS EVERY LOOP
     button.update();
 
@@ -599,6 +920,26 @@ void loop()
     webServer.handleClient();
     delay(1);
 
+    if (isAccessPointMode) {
+        updateCustomTextDisplay();
+        return;
+    }
+
+    // keep WiFiMulti state fresh without blocking the UI
+    wl_status_t runtimeStatus = static_cast<wl_status_t>(wifiMulti.run());
+    bool currentlyConnected = (runtimeStatus == WL_CONNECTED);
+    if (currentlyConnected != wifiConnected) {
+        wifiConnected = currentlyConnected;
+        if (wifiConnected) {
+            Serial.println("WiFi connection restored");
+            flashStatusMessage("WiFi OK", dma_display->color565(0, 255, 120), 800);
+            showIPAddress(WiFi.localIP(), "WiFi IP");
+        } else {
+            Serial.println("WiFi disconnected");
+            flashStatusMessage("WiFi LOST", dma_display->color565(255, 120, 80), 800);
+        }
+    }
+
     // Update display based on current mode
     switch (currentDisplayMode) {
         case MODE_CLOCK_WITH_ANIMATION:
@@ -628,6 +969,9 @@ void updateClockWithAnimation() {
             Serial.println("Performing screen time update...");
             dma_display->fillRect(0, 9, PANEL_RES_X, 9, 0x00); // wipe the section of the screen just used for the time
             dma_display->setCursor(8, 10);
+            dma_display->setFont(nullptr);
+            dma_display->setTextSize(1);
+            dma_display->setTextColor(dma_display->color565(255, 255, 255));
             dma_display->print(buffer);
         } else {
             Serial.println("Failed to get time from all sources.");
@@ -684,26 +1028,35 @@ void updateClockOnly() {
         struct tm timeinfo;
         if (getTimeWithFallback(&timeinfo)) {
             dma_display->clearScreen();
-            
-            // Display time
+
+            dma_display->setFont(nullptr);
+            dma_display->setTextWrap(false);
+
+            // Display HH:MM large
             memset(buffer, 0, 64);
-            snprintf(buffer, 64, "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-            dma_display->setCursor(8, 4);
+            snprintf(buffer, 64, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+            dma_display->setCursor(2, 2);
+            dma_display->setTextSize(2);
             dma_display->setTextColor(dma_display->color565(255, 255, 255));
             dma_display->print(buffer);
-            
+
             // Display date
+            dma_display->setTextSize(1);
             memset(buffer, 0, 64);
-            snprintf(buffer, 64, "%02d/%02d/%04d", timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
-            dma_display->setCursor(2, 16);
+            snprintf(buffer, 64, "%s %02d %04d", kMonthNames[timeinfo.tm_mon], timeinfo.tm_mday, timeinfo.tm_year + 1900);
+            dma_display->setCursor(2, 20);
             dma_display->setTextColor(dma_display->color565(200, 200, 200));
             dma_display->print(buffer);
             
             // Display day of week
-            const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-            dma_display->setCursor(2, 26);
-            dma_display->setTextColor(dma_display->color565(150, 150, 255));
-            dma_display->print(days[timeinfo.tm_wday]);
+            dma_display->setCursor(2, 28);
+            dma_display->setTextColor(dma_display->color565(0, 170, 255));
+            dma_display->print(kDayNames[timeinfo.tm_wday]);
+
+            // Seconds progress bar along the bottom edge for heartbeat feedback
+            int progress = map(timeinfo.tm_sec, 0, 59, 0, PANEL_RES_X);
+            dma_display->drawFastHLine(0, PANEL_RES_Y - 2, PANEL_RES_X, dma_display->color565(30, 30, 30));
+            dma_display->drawFastHLine(0, PANEL_RES_Y - 2, progress, dma_display->color565(0, 255, 120));
 
             Serial.println("Clock-only mode update");
         } else {
@@ -728,6 +1081,8 @@ void updateClockOverlay() {
             // Draw time with black background for readability
             dma_display->fillRect(18, 12, 28, 8, 0x0000);
             dma_display->setCursor(20, 14);
+            dma_display->setFont(nullptr);
+            dma_display->setTextSize(1);
             dma_display->setTextColor(dma_display->color565(255, 255, 255));
             dma_display->print(buffer);
 
