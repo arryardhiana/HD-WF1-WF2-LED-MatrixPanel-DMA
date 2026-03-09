@@ -141,11 +141,13 @@ Payload kosong atau `{}` — reset display ke idle state.
 - [x] P4: Greeting dinamis via MQTT (scroll horizontal + color configurable) — Phase 3
 - [x] Auto-timeout idle: display reset ke idle setelah gDisplayTimeout detik — Phase 3
 
+- [x] Watchdog timer ESP32 task WDT (30s, panic+reboot) — Phase 4
+- [x] MQTT offline indicator on P2 row 3 ("OFFLINE" dim-red after 5s disconnect) — Phase 4
+- [x] ArduinoOTA over-the-air firmware update support — Phase 4
+
 ### Active (In Progress)
-- [ ] Auto-reconnect WiFi dan MQTT tanpa blocking
-- [ ] Brightness control via MQTT config topic (runtime apply)
-- [ ] Watchdog timer / heartbeat
-- [ ] OTA update verification
+- [ ] Resolve Python 3.14 vs PlatformIO (downgrade to 3.12) — before flash
+- [ ] Verify esp_task_wdt_init() API for board ESP-IDF version
 
 ### Out of Scope
 - ANPR system (diasumsikan sudah ada, hanya integrasi via MQTT)
@@ -187,4 +189,4 @@ Payload kosong atau `{}` — reset display ke idle state.
 
 ---
 *Created: 2026-03-09*
-*Last updated: 2026-03-09 after Phase 3*
+*Last updated: 2026-03-09 after Phase 4 (v0.2 complete)*

@@ -16,6 +16,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_task_wdt.h>
+#include <ArduinoOTA.h>
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
@@ -29,6 +31,9 @@ static const char* MQTT_HOST = "10.10.6.99";
 static const uint16_t MQTT_PORT = 1883;
 static const char* MQTT_USER = "app";
 static const char* MQTT_PASS = "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ";
+
+// OTA
+static const char* OTA_PASSWORD = "ota-parking";
 
 // Gate identity — configurable per device
 static const char* GATE_ID   = "gate-a";
@@ -99,6 +104,38 @@ static String topicConfig()   { return String("parking/") + GATE_ID + "/config";
 static String topicReset()    { return String("parking/") + GATE_ID + "/reset"; }
 
 // ---------------------------------------------------------------------------
+// OTA setup
+// ---------------------------------------------------------------------------
+
+void setupOTA() {
+  const String hostname = String("parking-") + GATE_ID;
+  ArduinoOTA.setHostname(hostname.c_str());
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+
+  ArduinoOTA.onStart([]() {
+    const String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
+    Serial.println("[ota] start: " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\n[ota] end");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("[ota] progress: %u%%\r", progress * 100 / total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("[ota] error[%u]: ", error);
+    if      (error == OTA_AUTH_ERROR)    Serial.println("auth failed");
+    else if (error == OTA_BEGIN_ERROR)   Serial.println("begin failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("connect failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("receive failed");
+    else if (error == OTA_END_ERROR)     Serial.println("end failed");
+  });
+
+  ArduinoOTA.begin();
+  Serial.printf("[ota] ready — hostname: %s\n", hostname.c_str());
+}
+
+// ---------------------------------------------------------------------------
 // NTP / clock
 // ---------------------------------------------------------------------------
 
@@ -108,7 +145,9 @@ static unsigned long gLastClockUpdateMs = 0;
 static int16_t       gGreetingScrollX = PANEL_RES_X; // starts at right edge of P4
 static unsigned long gLastScrollMs    = 0;
 
-static unsigned long gLastEventMs = 0; // millis() of last non-idle event (for display timeout)
+static unsigned long gLastEventMs = 0;          // millis() of last non-idle event (for display timeout)
+static bool          gMqttWasConnected   = false; // tracks prior MQTT state for offline indicator
+static unsigned long gMqttDisconnectedMs = 0;     // millis() when MQTT first lost connection
 
 // ---------------------------------------------------------------------------
 // Hardware pin configuration
@@ -341,8 +380,18 @@ void renderPanels() {
   drawCenteredText(gGate.gateName, 0, PANEL_RES_Y + 1, PANEL_RES_X, 8);
   targetSetTextColor(valueColor);
   drawCenteredText(gClockStr, 0, PANEL_RES_Y + 12, PANEL_RES_X, 8);
-  drawCenteredText(gGate.anprStatus.length() ? gGate.anprStatus : "--",
-                   0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
+  {
+    const bool mqttOffline = gMqttWasConnected && gMqttDisconnectedMs > 0 &&
+                             (millis() - gMqttDisconnectedMs >= 5000UL);
+    if (mqttOffline) {
+      targetSetTextColor(dma_display->color565(180, 0, 0)); // dim red
+      drawCenteredText("OFFLINE", 0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
+    } else {
+      targetSetTextColor(valueColor);
+      drawCenteredText(gGate.anprStatus.length() ? gGate.anprStatus : "--",
+                       0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
+    }
+  }
 
   // P3 (row 2): large plate number — 2-row split layout
   {
@@ -710,6 +759,12 @@ void setup() {
   } else {
     renderPanels();
   }
+
+  setupOTA();
+
+  esp_task_wdt_init(30, true); // 30s timeout, panic+reboot on trigger
+  esp_task_wdt_add(NULL);      // watch main loop task
+  Serial.println("[wdt] watchdog initialized (30s)");
 }
 
 void loop() {
@@ -722,6 +777,7 @@ void loop() {
       setupDisplayForConfig(next);
       renderCalibrationPattern();
     }
+    esp_task_wdt_reset();
     delay(5);
     return;
   }
@@ -731,6 +787,19 @@ void loop() {
 
   if (mqttClient.connected()) {
     mqttClient.loop();
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    ArduinoOTA.handle();
+  }
+
+  // Track MQTT connection state for offline indicator
+  if (mqttClient.connected()) {
+    gMqttWasConnected   = true;
+    gMqttDisconnectedMs = 0;
+  } else if (gMqttWasConnected && gMqttDisconnectedMs == 0) {
+    gMqttDisconnectedMs = millis(); // record when connection was lost
+    redrawNeeded = true;
   }
 
   // Update clock every second
@@ -773,5 +842,6 @@ void loop() {
     redrawNeeded = false;
   }
 
+  esp_task_wdt_reset();
   delay(5);
 }

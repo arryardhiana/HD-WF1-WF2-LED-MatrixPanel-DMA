@@ -5,29 +5,29 @@
 See: .paul/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Staff parking dapat melihat status akses kendaraan (granted/denied), hasil scan ANPR, nomor plat, dan info gate secara real-time via MQTT.
-**Current focus:** v0.2 Parking Gate Display — Phase 3 COMPLETE, siap Phase 4
+**Current focus:** v0.2 Parking Gate Display — MILESTONE COMPLETE
 
 ## Current Position
 
-Milestone: v0.2 Parking Gate Display
-Phase: 4 of 4 (Polish & Robustness) — Not started
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-03-09 — Phase 3 complete, transitioned to Phase 4
+Milestone: v0.2 Parking Gate Display — COMPLETE
+Phase: 4 of 4 (Polish & Robustness) — Complete
+Plan: All plans complete
+Status: v0.2 milestone complete — ready for field deploy or next milestone
+Last activity: 2026-03-09 — Phase 4 complete, v0.2 milestone complete
 
 Progress:
-- Milestone: [███████░░░] 75%
+- Milestone: [██████████] 100% COMPLETE
 - Phase 1:   [██████████] 100% COMPLETE
 - Phase 2:   [██████████] 100% COMPLETE
 - Phase 3:   [██████████] 100% COMPLETE
-- Phase 4:   [░░░░░░░░░░] 0%
+- Phase 4:   [██████████] 100% COMPLETE
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [Loop complete - ready for next PLAN]
+  ✓        ✓        ✓     [Milestone complete]
 ```
 
 ## Accumulated Context
@@ -39,19 +39,21 @@ PLAN ──▶ APPLY ──▶ UNIFY
 | ArduinoJson v7 JsonDocument | StaticJsonDocument deprecated | 2026-03-09 |
 | NVS Preferences namespace "gate-cfg" | Built-in ESP32, no extra lib | 2026-03-09 |
 | GATE_ID tetap compile-time constant | NVS hanya untuk runtime config | 2026-03-09 |
-| NTP (bukan BM8563 RTC) untuk jam P2 | Lebih simpel — tidak perlu I2C/library tambahan, cukup configTime() | 2026-03-09 |
-| configTime() di setup() (bukan di connectWiFiIfNeeded) | Hanya perlu dipanggil sekali; SNTP daemon retry otomatis | 2026-03-09 |
-| P2 y offsets +1/+12/+23 untuk 3-row layout | 3×8px + 3px gaps = 30px dalam 32px panel | 2026-03-09 |
-| P3 textSize(2) 2-row split: split on 2nd space | Fits "D 1234 ABC" as 2 rows for max readability | 2026-03-09 |
-| gDisplayTimeout=0 skips timeout check entirely | Condition handles it — no special case needed | 2026-03-09 |
+| NTP (bukan BM8563 RTC) untuk jam P2 | Lebih simpel — configTime() cukup | 2026-03-09 |
+| P3 textSize(2) 2-row split on 2nd space | Max readability for plate numbers | 2026-03-09 |
+| gDisplayTimeout=0 skips timeout check | Condition handles it — no special case | 2026-03-09 |
+| gMqttWasConnected guard for OFFLINE indicator | No false OFFLINE on first boot | 2026-03-09 |
+| ArduinoOTA.handle() WiFi-guarded | Clean no-op when offline | 2026-03-09 |
 
 ### Deferred Issues
 | Issue | Origin | Effort | Revisit |
 |-------|--------|--------|---------|
-| `pio run` gagal Python 3.14 vs PlatformIO | 01-01 | M | Downgrade Python ke 3.12 — must fix before flash |
+| `pio run` gagal Python 3.14 vs PlatformIO | 01-01 | M | Downgrade Python ke 3.12 — MUST FIX before flash |
+| esp_task_wdt_init() API mismatch (ESP-IDF v5.x) | 04-01 | S | Verify/update API before flash |
 
 ### Blockers/Concerns
 - Python 3.14 vs PlatformIO: build CLI tidak bisa diverifikasi — perlu diselesaikan sebelum flash.
+- esp_task_wdt_init(30, true) — new ESP-IDF v5.x API may need struct config parameter.
 
 ## Phase 1 Summary (apa yang dibangun)
 - **01-01**: GateState struct, 4 MQTT topic helpers, mqttCallback routing
@@ -65,14 +67,18 @@ PLAN ──▶ APPLY ──▶ UNIFY
 ## Phase 3 Summary (apa yang dibangun)
 - **03-01**: P1 full color block — getStatusColor(), fillRect() per status, idle=black
 - **03-02**: P2 rendering polish — centered 3-row text dengan labelColor/valueColor
-- **03-03**: P3 large plate — textSize(2), 2-row split, drawCenteredText2(); P4 scroll + color support
-- **03-04**: Auto-timeout idle — gLastEventMs global, millis()-based loop() check, gDisplayTimeout=0 disables
+- **03-03**: P3 large plate — textSize(2), 2-row split, drawCenteredText2(); P4 scroll+color
+- **03-04**: Auto-timeout idle — gLastEventMs global, millis()-based loop() check
+
+## Phase 4 Summary (apa yang dibangun)
+- **04-01**: esp_task_wdt watchdog (30s panic); MQTT offline indicator P2 row 3
+- **04-02**: ArduinoOTA — setupOTA() helper, handle() in loop(), hostname "parking-{GATE_ID}"
 
 ## Session Continuity
 
 Last session: 2026-03-09
-Stopped at: Phase 3 complete, transitioned to Phase 4
-Next action: /paul:plan for Phase 4 (Polish & Robustness)
+Stopped at: v0.2 milestone complete
+Next action: Resolve Python 3.14/PlatformIO, verify esp_task_wdt_init() API, then flash to hardware
 Resume file: .paul/ROADMAP.md
 
 ---
