@@ -16,7 +16,6 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
-#include <esp_task_wdt.h>
 #include <ArduinoOTA.h>
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
@@ -148,6 +147,7 @@ static unsigned long gLastScrollMs    = 0;
 static unsigned long gLastEventMs = 0;          // millis() of last non-idle event (for display timeout)
 static bool          gMqttWasConnected   = false; // tracks prior MQTT state for offline indicator
 static unsigned long gMqttDisconnectedMs = 0;     // millis() when MQTT first lost connection
+static bool          gOtaInitialized     = false; // ArduinoOTA.begin() called once after WiFi
 
 // ---------------------------------------------------------------------------
 // Hardware pin configuration
@@ -629,6 +629,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void connectWiFiIfNeeded() {
   if (WiFi.status() == WL_CONNECTED) {
     wifiConnectedShown = true;
+    if (!gOtaInitialized) {
+      setupOTA();
+      gOtaInitialized = true;
+    }
     return;
   }
 
@@ -760,13 +764,8 @@ void setup() {
     renderPanels();
   }
 
-  setupOTA();
-
-  const esp_task_wdt_config_t wdtCfg = { .timeout_ms = 30000, .idle_core_mask = 0, .trigger_panic = true };
-  esp_task_wdt_init(&wdtCfg); // 30s timeout, panic+reboot on trigger (ESP-IDF v5.x API)
-  esp_task_wdt_add(NULL);      // watch main loop task
-  Serial.println("[wdt] watchdog initialized (30s)");
 }
+// ArduinoOTA is initialized in loop() after WiFi first connects (see gOtaInitialized flag)
 
 void loop() {
   if (CALIBRATION_MODE) {
@@ -778,7 +777,6 @@ void loop() {
       setupDisplayForConfig(next);
       renderCalibrationPattern();
     }
-    esp_task_wdt_reset();
     delay(5);
     return;
   }
@@ -843,6 +841,5 @@ void loop() {
     redrawNeeded = false;
   }
 
-  esp_task_wdt_reset();
   delay(5);
 }
