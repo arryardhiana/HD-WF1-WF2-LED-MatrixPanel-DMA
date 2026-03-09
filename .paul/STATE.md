@@ -5,28 +5,29 @@
 See: .paul/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Staff parking dapat melihat status akses kendaraan (granted/denied), hasil scan ANPR, nomor plat, dan info gate secara real-time via MQTT.
-**Current focus:** v0.2 Parking Gate Display — Phase 2 COMPLETE, siap Phase 3
+**Current focus:** v0.2 Parking Gate Display — Phase 3 COMPLETE, siap Phase 4
 
 ## Current Position
 
 Milestone: v0.2 Parking Gate Display
-Phase: 3 of 4 (Panel Rendering P1-P4) — In Progress
-Plan: 03-04 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-03-09 — Created .paul/phases/03-panel-rendering/03-04-PLAN.md
+Phase: 4 of 4 (Polish & Robustness) — Not started
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-03-09 — Phase 3 complete, transitioned to Phase 4
 
 Progress:
-- Milestone: [█████░░░░░] 50%
+- Milestone: [███████░░░] 75%
 - Phase 1:   [██████████] 100% COMPLETE
 - Phase 2:   [██████████] 100% COMPLETE
-- Phase 3:   [░░░░░░░░░░] 0%
+- Phase 3:   [██████████] 100% COMPLETE
+- Phase 4:   [░░░░░░░░░░] 0%
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [Plan created, awaiting approval]
+  ✓        ✓        ✓     [Loop complete - ready for next PLAN]
 ```
 
 ## Accumulated Context
@@ -39,17 +40,15 @@ PLAN ──▶ APPLY ──▶ UNIFY
 | NVS Preferences namespace "gate-cfg" | Built-in ESP32, no extra lib | 2026-03-09 |
 | GATE_ID tetap compile-time constant | NVS hanya untuk runtime config | 2026-03-09 |
 | NTP (bukan BM8563 RTC) untuk jam P2 | Lebih simpel — tidak perlu I2C/library tambahan, cukup configTime() | 2026-03-09 |
-| gDisplayTimeout disimpan, belum digunakan | Logic idle timer di Phase 4 | 2026-03-09 |
 | configTime() di setup() (bukan di connectWiFiIfNeeded) | Hanya perlu dipanggil sekali; SNTP daemon retry otomatis | 2026-03-09 |
 | P2 y offsets +1/+12/+23 untuk 3-row layout | 3×8px + 3px gaps = 30px dalam 32px panel | 2026-03-09 |
+| P3 textSize(2) 2-row split: split on 2nd space | Fits "D 1234 ABC" as 2 rows for max readability | 2026-03-09 |
+| gDisplayTimeout=0 skips timeout check entirely | Condition handles it — no special case needed | 2026-03-09 |
 
 ### Deferred Issues
 | Issue | Origin | Effort | Revisit |
 |-------|--------|--------|---------|
-| `pio run` gagal Python 3.14 vs PlatformIO | 01-01 | M | Downgrade Python ke 3.12 |
-| scroll + color dari greeting | 01-02 | S | Phase 3 |
-| GFX_Lite font besar untuk P3 | PROJECT.md | S | Phase 3 plan 03-03 |
-| Idle timer logic (gDisplayTimeout) | 01-03 | S | Phase 4 plan 04-01 |
+| `pio run` gagal Python 3.14 vs PlatformIO | 01-01 | M | Downgrade Python ke 3.12 — must fix before flash |
 
 ### Blockers/Concerns
 - Python 3.14 vs PlatformIO: build CLI tidak bisa diverifikasi — perlu diselesaikan sebelum flash.
@@ -63,12 +62,18 @@ PLAN ──▶ APPLY ──▶ UNIFY
 - **02-01**: configTime(UTC+7), gClockStr global, updateClock(), 1-second loop timer
 - **02-02**: P2 3-row layout: gate name / gClockStr / ANPR status
 
+## Phase 3 Summary (apa yang dibangun)
+- **03-01**: P1 full color block — getStatusColor(), fillRect() per status, idle=black
+- **03-02**: P2 rendering polish — centered 3-row text dengan labelColor/valueColor
+- **03-03**: P3 large plate — textSize(2), 2-row split, drawCenteredText2(); P4 scroll + color support
+- **03-04**: Auto-timeout idle — gLastEventMs global, millis()-based loop() check, gDisplayTimeout=0 disables
+
 ## Session Continuity
 
 Last session: 2026-03-09
-Stopped at: Plan 03-04 created
-Next action: Review and approve plan, then run /paul:apply .paul/phases/03-panel-rendering/03-04-PLAN.md
-Resume file: .paul/phases/03-panel-rendering/03-04-PLAN.md
+Stopped at: Phase 3 complete, transitioned to Phase 4
+Next action: /paul:plan for Phase 4 (Polish & Robustness)
+Resume file: .paul/ROADMAP.md
 
 ---
 *STATE.md — Updated after every significant action*

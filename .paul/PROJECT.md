@@ -136,12 +136,16 @@ Payload kosong atau `{}` — reset display ke idle state.
 - [x] NVS config persistence (gate_name, brightness, display_timeout) — Phase 1
 - [x] NTP real-time clock di P2 via configTime() UTC+7 — Phase 2 (NTP dipilih vs BM8563 RTC)
 - [x] P2 3-row layout: gate name / jam / ANPR status — Phase 2
+- [x] P1: Full color status block (granted=hijau / denied=merah / scanning=kuning / idle=gelap) — Phase 3
+- [x] P3: Display nomor plat besar (textSize 2, 2-row split, centered) — Phase 3
+- [x] P4: Greeting dinamis via MQTT (scroll horizontal + color configurable) — Phase 3
+- [x] Auto-timeout idle: display reset ke idle setelah gDisplayTimeout detik — Phase 3
 
 ### Active (In Progress)
-- [ ] P1: Full color status block (granted=hijau / denied=merah / scanning=kuning / idle=gelap)
-- [ ] P2: Full rendering enhancement (font, color polish) — Phase 3
-- [ ] P3: Display nomor plat besar (font besar, centered)
-- [ ] P4: Greeting dinamis via MQTT (scroll + color support)
+- [ ] Auto-reconnect WiFi dan MQTT tanpa blocking
+- [ ] Brightness control via MQTT config topic (runtime apply)
+- [ ] Watchdog timer / heartbeat
+- [ ] OTA update verification
 
 ### Out of Scope
 - ANPR system (diasumsikan sudah ada, hanya integrasi via MQTT)
@@ -183,4 +187,4 @@ Payload kosong atau `{}` — reset display ke idle state.
 
 ---
 *Created: 2026-03-09*
-*Last updated: 2026-03-09 after Phase 2*
+*Last updated: 2026-03-09 after Phase 3*

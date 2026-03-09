@@ -756,6 +756,18 @@ void loop() {
     }
   }
 
+  // Auto-timeout: reset to idle after gDisplayTimeout seconds from last event
+  if (gGate.status != "idle" && gDisplayTimeout > 0) {
+    const unsigned long nowMs = millis();
+    if (nowMs - gLastEventMs >= static_cast<unsigned long>(gDisplayTimeout) * 1000UL) {
+      gGate.status     = "idle";
+      gGate.plate      = "";
+      gGate.anprStatus = "";
+      redrawNeeded     = true;
+      Serial.printf("[timeout] display reset to idle after %us\n", gDisplayTimeout);
+    }
+  }
+
   if (redrawNeeded) {
     renderPanels();
     redrawNeeded = false;
