@@ -29,8 +29,8 @@ static const char* MQTT_PASS = "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ";
 #define PANEL_RES_X 64
 #define PANEL_RES_Y 32
 #define PANEL_CHAIN 4
-#define VIRTUAL_ROWS 2
-#define VIRTUAL_COLS 2
+#define VIRTUAL_ROWS 4
+#define VIRTUAL_COLS 1
 
 constexpr bool CALIBRATION_MODE = false;
 constexpr size_t LOCKED_DISPLAY_CONFIG_INDEX = 4; // CFG 5 selected during calibration.
@@ -98,7 +98,20 @@ public:
   using VirtualMatrixPanel::VirtualMatrixPanel;
 
   VirtualCoords getCoords(int16_t x, int16_t y) override {
-    if (gFlipBottomPanels && PANEL_CHAIN >= 4) {
+    if (PANEL_CHAIN >= 4 && VIRTUAL_ROWS == 4 && VIRTUAL_COLS == 1) {
+      const int16_t panelCol = x / PANEL_RES_X;
+      const int16_t panelRow = y / PANEL_RES_Y;
+      const int16_t panelIndex = panelRow;
+      if (panelIndex == 0 || panelIndex == 2) { // P1 and P3 (rotate 180)
+        const int16_t localX = x % PANEL_RES_X;
+        const int16_t localY = y % PANEL_RES_Y;
+        x = panelCol * PANEL_RES_X + (PANEL_RES_X - 1 - localX);
+        y = panelRow * PANEL_RES_Y + (PANEL_RES_Y - 1 - localY);
+      }
+    }
+
+    // Bottom-panel flip calibration only applies to the 2x2 arrangement.
+    if (gFlipBottomPanels && PANEL_CHAIN >= 4 && VIRTUAL_ROWS == 2 && VIRTUAL_COLS == 2) {
       const int16_t panelCol = x / PANEL_RES_X;
       const int16_t panelRow = y / PANEL_RES_Y;
       const int16_t panelIndex = panelRow * VIRTUAL_COLS + panelCol;
