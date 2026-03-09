@@ -74,7 +74,9 @@ struct GateState {
   String plate      = "";            // nomor plat terbaca, e.g. "D 1234 ABC"
   String anprStatus = "";            // "detected" | "not_detected" | "low_confidence"
   String gateName   = GATE_NAME;     // nama gate (dapat dioverride dari topic config)
-  String greeting   = "Selamat Datang";
+  String greeting       = "Selamat Datang";
+  String greetingColor  = "white";           // "white" | "yellow" | "cyan"
+  bool   greetingScroll = false;
 };
 
 static GateState gGate;
@@ -102,6 +104,11 @@ static String topicReset()    { return String("parking/") + GATE_ID + "/reset"; 
 
 static String        gClockStr          = "--:--:--";
 static unsigned long gLastClockUpdateMs = 0;
+
+static int16_t       gGreetingScrollX = PANEL_RES_X; // starts at right edge of P4
+static unsigned long gLastScrollMs    = 0;
+
+static unsigned long gLastEventMs = 0; // millis() of last non-idle event (for display timeout)
 
 // ---------------------------------------------------------------------------
 // Hardware pin configuration
@@ -255,6 +262,14 @@ void drawCenteredText(const String& text, int16_t x, int16_t y, int16_t w, int16
   targetPrint(text);
 }
 
+// Centered text for textSize(2): 12px per char width, ~16px height.
+void drawCenteredText2(const String& text, int16_t x, int16_t y, int16_t w) {
+  const int textWidth = static_cast<int>(text.length()) * 12;
+  const int textX = x + max(0, (w - textWidth) / 2);
+  targetSetCursor(textX, y);
+  targetPrint(text);
+}
+
 String sanitizePayload(const String& raw) {
   String out = raw;
   out.trim();
@@ -276,6 +291,23 @@ bool tryParseNumber(const String& text, float& valueOut) {
 // Rendering
 // ---------------------------------------------------------------------------
 
+// Returns color565 for access status. Returns 0 (black) for "idle" or unknown.
+uint16_t getStatusColor(const String& status) {
+  if (!dma_display) return 0;
+  if (status == "granted")  return dma_display->color565(0,   220, 0);
+  if (status == "denied")   return dma_display->color565(220, 0,   0);
+  if (status == "scanning") return dma_display->color565(220, 180, 0);
+  return 0; // idle or unknown — black
+}
+
+// Returns color565 for greeting color name. Defaults to white.
+uint16_t greetingColorToColor565(const String& colorName) {
+  if (!dma_display) return 0;
+  if (colorName == "yellow") return dma_display->color565(255, 220, 0);
+  if (colorName == "cyan")   return dma_display->color565(0, 220, 220);
+  return dma_display->color565(255, 255, 255); // white (default)
+}
+
 void renderStatus(const char* line1, const char* line2, uint16_t color) {
   if (!dma_display) return;
   const int totalWidth = PANEL_RES_X * VIRTUAL_COLS;
@@ -295,12 +327,13 @@ void renderPanels() {
 
   targetFillScreen(0);
 
-  // P1 (row 0): access status
-  targetSetTextDefaults();
-  targetSetTextColor(labelColor);
-  drawCenteredText("STATUS", 0, 1, PANEL_RES_X, 8);
-  targetSetTextColor(valueColor);
-  drawCenteredText(gGate.status, 0, 12, PANEL_RES_X, 12);
+  // P1 (row 0): full color status block
+  const uint16_t p1Color = getStatusColor(gGate.status);
+  if (p1Color) {
+    if (virtual_display) virtual_display->fillRect(0, 0, PANEL_RES_X, PANEL_RES_Y, p1Color);
+    else dma_display->fillRect(0, 0, PANEL_RES_X, PANEL_RES_Y, p1Color);
+  }
+  // idle: stays black from targetFillScreen(0) at start of renderPanels()
 
   // P2 (row 1): gate name / clock / ANPR status
   targetSetTextDefaults();
@@ -311,16 +344,38 @@ void renderPanels() {
   drawCenteredText(gGate.anprStatus.length() ? gGate.anprStatus : "--",
                    0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
 
-  // P3 (row 2): plate number
-  targetSetTextDefaults();
-  targetSetTextColor(valueColor);
-  drawCenteredText(gGate.plate.length() ? gGate.plate : "-- ---- --",
-                   0, PANEL_RES_Y * 2 + 12, PANEL_RES_X, 12);
+  // P3 (row 2): large plate number — 2-row split layout
+  {
+    const String plate = gGate.plate.length() ? gGate.plate : "------";
+    const int firstSpace  = plate.indexOf(' ');
+    const int secondSpace = (firstSpace >= 0) ? plate.indexOf(' ', firstSpace + 1) : -1;
+    const String line1 = (secondSpace > 0) ? plate.substring(0, secondSpace) : plate;
+    const String line2 = (secondSpace > 0) ? plate.substring(secondSpace + 1) : String();
 
-  // P4 (row 3): greeting
-  targetSetTextDefaults();
-  targetSetTextColor(labelColor);
-  drawCenteredText(gGate.greeting, 0, PANEL_RES_Y * 3 + 12, PANEL_RES_X, 12);
+    targetSetTextDefaults();
+    targetSetTextSize(2);
+    targetSetTextColor(dma_display->color565(255, 255, 255)); // white for max contrast
+
+    const int p3TopY = PANEL_RES_Y * 2 + 2;   // top row baseline
+    const int p3BotY = PANEL_RES_Y * 2 + 18;  // bottom row baseline
+    drawCenteredText2(line1, 0, p3TopY, PANEL_RES_X);
+    if (line2.length() > 0) {
+      drawCenteredText2(line2, 0, p3BotY, PANEL_RES_X);
+    }
+    targetSetTextSize(1); // restore before P4
+  }
+
+  // P4 (row 3): greeting — color + optional scroll
+  {
+    targetSetTextDefaults();
+    targetSetTextColor(greetingColorToColor565(gGate.greetingColor));
+    if (gGate.greetingScroll) {
+      targetSetCursor(gGreetingScrollX, PANEL_RES_Y * 3 + 12);
+      targetPrint(gGate.greeting);
+    } else {
+      drawCenteredText(gGate.greeting, 0, PANEL_RES_Y * 3 + 12, PANEL_RES_X, 12);
+    }
+  }
 }
 
 void renderCalibrationPattern() {
@@ -387,6 +442,11 @@ void handleEventTopic(const String& payload) {
     Serial.printf("[event] unknown status value: %s\n", status);
   }
 
+  // Track timestamp for display timeout (only non-idle events reset the timer)
+  if (gGate.status != "idle") {
+    gLastEventMs = millis();
+  }
+
   gGate.plate      = String(plate);
   gGate.anprStatus = String(anpr);
   if (strlen(gate) > 0) gGate.gateName = String(gate);
@@ -407,16 +467,40 @@ void handleGreetingTopic(const String& payload) {
     return;
   }
 
-  // Hanya update jika field "text" ada dan tidak kosong
+  bool changed = false;
+
+  // Update text if present and non-empty
   const char* text = doc["text"] | "";
-  if (strlen(text) > 0) {
+  if (strlen(text) > 0 && gGate.greeting != text) {
     gGate.greeting = String(text);
-    redrawNeeded   = true;
+    gGreetingScrollX = PANEL_RES_X; // reset scroll on new text
+    changed = true;
     Serial.printf("[greeting] text=%s\n", gGate.greeting.c_str());
-  } else {
-    Serial.println("[greeting] 'text' field missing or empty — greeting unchanged");
   }
-  // Field "scroll" dan "color" diimplementasi di Phase 3 rendering
+
+  // Update color if present and recognized
+  if (doc["color"].is<const char*>()) {
+    const String c = doc["color"].as<String>();
+    if ((c == "white" || c == "yellow" || c == "cyan") && gGate.greetingColor != c) {
+      gGate.greetingColor = c;
+      changed = true;
+      Serial.printf("[greeting] color=%s\n", c.c_str());
+    }
+  }
+
+  // Update scroll if present
+  if (doc["scroll"].is<bool>()) {
+    const bool scroll = doc["scroll"].as<bool>();
+    if (scroll != gGate.greetingScroll) {
+      gGate.greetingScroll = scroll;
+      gGreetingScrollX = PANEL_RES_X; // reset position when toggled
+      changed = true;
+      Serial.printf("[greeting] scroll=%s\n", scroll ? "true" : "false");
+    }
+  }
+
+  if (changed) redrawNeeded = true;
+  else Serial.println("[greeting] no changes detected");
 }
 
 void handleConfigTopic(const String& payload) {
@@ -654,6 +738,20 @@ void loop() {
   if (clockNowMs - gLastClockUpdateMs >= 1000) {
     gLastClockUpdateMs = clockNowMs;
     if (updateClock()) {
+      redrawNeeded = true;
+    }
+  }
+
+  // Advance P4 greeting scroll if enabled
+  if (gGate.greetingScroll) {
+    const unsigned long scrollNowMs = millis();
+    if (scrollNowMs - gLastScrollMs >= 40) { // ~25fps
+      gLastScrollMs = scrollNowMs;
+      gGreetingScrollX--;
+      const int textWidth = static_cast<int>(gGate.greeting.length()) * 6;
+      if (gGreetingScrollX < -textWidth) {
+        gGreetingScrollX = PANEL_RES_X; // wrap: restart from right edge
+      }
       redrawNeeded = true;
     }
   }

@@ -16,7 +16,7 @@ Phases: 2 of 4 complete
 |-------|------|-------|--------|-----------|
 | 1 | MQTT & JSON Refactor | 3 | Complete | 2026-03-09 |
 | 2 | NTP Clock Integration | 2 | Complete | 2026-03-09 |
-| 3 | Panel Rendering P1-P4 | 4 | Not started | - |
+| 3 | Panel Rendering P1-P4 | 4 | Planning | - |
 | 4 | Polish & Robustness | 2 | Not started | - |
 
 ## Phase Details
