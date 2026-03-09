@@ -36,7 +36,7 @@ static const char* MQTT_PASS = "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ";
 static const char* OTA_PASSWORD = "ota-parking";
 
 // Gate identity — configurable per device
-static const char* GATE_ID   = "gate-a";
+static const char* GATE_ID   = "gate-01";
 static const char* GATE_NAME = "Gate A";
 
 // HUB75 panel setup
