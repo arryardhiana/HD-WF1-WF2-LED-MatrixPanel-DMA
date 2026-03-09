@@ -762,7 +762,8 @@ void setup() {
 
   setupOTA();
 
-  esp_task_wdt_init(30, true); // 30s timeout, panic+reboot on trigger
+  const esp_task_wdt_config_t wdtCfg = { .timeout_ms = 30000, .idle_core_mask = 0, .trigger_panic = true };
+  esp_task_wdt_init(&wdtCfg); // 30s timeout, panic+reboot on trigger (ESP-IDF v5.x API)
   esp_task_wdt_add(NULL);      // watch main loop task
   Serial.println("[wdt] watchdog initialized (30s)");
 }
