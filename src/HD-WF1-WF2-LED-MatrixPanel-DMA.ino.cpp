@@ -393,7 +393,7 @@ void renderPanels() {
     }
   }
 
-  // P3 (row 2): large plate number — 2-row split layout
+  // P3 (row 2): plate number — textSize(2) if lines fit, else textSize(1) single line
   {
     const String plate = gGate.plate.length() ? gGate.plate : "------";
     const int firstSpace  = plate.indexOf(' ');
@@ -402,16 +402,24 @@ void renderPanels() {
     const String line2 = (secondSpace > 0) ? plate.substring(secondSpace + 1) : String();
 
     targetSetTextDefaults();
-    targetSetTextSize(2);
-    targetSetTextColor(dma_display->color565(255, 255, 255)); // white for max contrast
+    targetSetTextColor(dma_display->color565(255, 255, 255));
 
-    const int p3TopY = PANEL_RES_Y * 2 + 2;   // top row baseline
-    const int p3BotY = PANEL_RES_Y * 2 + 18;  // bottom row baseline
-    drawCenteredText2(line1, 0, p3TopY, PANEL_RES_X);
-    if (line2.length() > 0) {
-      drawCenteredText2(line2, 0, p3BotY, PANEL_RES_X);
+    const int p3MidY = PANEL_RES_Y * 2 + 12;  // center line for single-line fallback
+    const int p3TopY = PANEL_RES_Y * 2 + 2;
+    const int p3BotY = PANEL_RES_Y * 2 + 18;
+
+    const int maxLineLen = max((int)line1.length(), (int)line2.length());
+    if (maxLineLen * 12 <= PANEL_RES_X) {
+      // Both lines fit at textSize(2)
+      targetSetTextSize(2);
+      drawCenteredText2(line1, 0, p3TopY, PANEL_RES_X);
+      if (line2.length() > 0) drawCenteredText2(line2, 0, p3BotY, PANEL_RES_X);
+    } else {
+      // Falls back to textSize(1) — full plate on one centered line
+      targetSetTextSize(1);
+      drawCenteredText(plate, 0, p3MidY, PANEL_RES_X, 8);
     }
-    targetSetTextSize(1); // restore before P4
+    targetSetTextSize(1);
   }
 
   // P4 (row 3): greeting — color + optional scroll
@@ -422,7 +430,11 @@ void renderPanels() {
       targetSetCursor(gGreetingScrollX, PANEL_RES_Y * 3 + 12);
       targetPrint(gGate.greeting);
     } else {
-      drawCenteredText(gGate.greeting, 0, PANEL_RES_Y * 3 + 12, PANEL_RES_X, 12);
+      // Clamp x to 0 if text wider than panel — left-align instead of centering off-screen
+      const int greetW = static_cast<int>(gGate.greeting.length()) * 6;
+      const int greetX = max(0, (PANEL_RES_X - greetW) / 2);
+      targetSetCursor(greetX, PANEL_RES_Y * 3 + 12);
+      targetPrint(gGate.greeting);
     }
   }
 }
