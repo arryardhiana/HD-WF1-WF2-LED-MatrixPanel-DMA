@@ -1,4 +1,6 @@
-// Minimal WF1/WF2 HUB75 firmware: render MQTT sensor values on 4 chained 64x32 panels.
+// Parking gate LED matrix display firmware for WF1/WF2 HUB75 boards.
+// Renders access status, ANPR result, plate number, and greeting
+// on 4 chained 64x32 panels via MQTT JSON events.
 
 #if defined(WF1)
   #include "hd-wf1-esp32s2-config.h"
@@ -11,6 +13,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+#include <time.h>
 
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
@@ -24,6 +29,10 @@ static const char* MQTT_HOST = "10.10.6.99";
 static const uint16_t MQTT_PORT = 1883;
 static const char* MQTT_USER = "app";
 static const char* MQTT_PASS = "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ";
+
+// Gate identity — configurable per device
+static const char* GATE_ID   = "gate-a";
+static const char* GATE_NAME = "Gate A";
 
 // HUB75 panel setup
 #define PANEL_RES_X 64
@@ -56,20 +65,47 @@ static const DisplayConfig kDisplayConfigs[] = {
 
 constexpr uint8_t DISPLAY_PIXEL_BASE = 64;
 
-struct SensorBinding {
-  const char* topic;
-  const char* label;
-  const char* unit;
+// ---------------------------------------------------------------------------
+// Gate state — populated from MQTT events
+// ---------------------------------------------------------------------------
+
+struct GateState {
+  String status     = "idle";        // "granted" | "denied" | "scanning" | "idle"
+  String plate      = "";            // nomor plat terbaca, e.g. "D 1234 ABC"
+  String anprStatus = "";            // "detected" | "not_detected" | "low_confidence"
+  String gateName   = GATE_NAME;     // nama gate (dapat dioverride dari topic config)
+  String greeting   = "Selamat Datang";
 };
 
-static const SensorBinding kSensors[4] = {
-  {"am-102/sensor/temperature/state", "TEMP", "C"},
-  {"am-102/sensor/humidity/state", "HUM", "%"},
-  {"am-102/sensor/co2_level/state", "CO2", "ppm"},
-  {"am-102/sensor/pm2_5_concentration/state", "PM2.5", "ug/m3"},
-};
+static GateState gGate;
 
-String sensorValues[4] = {"--", "--", "--", "--"};
+// ---------------------------------------------------------------------------
+// Persisted config — loaded from NVS on boot, saved when changed via MQTT
+// ---------------------------------------------------------------------------
+
+static const char* NVS_NAMESPACE   = "gate-cfg";
+static uint8_t     gBrightness     = 96; // 0-255, default matches setupDisplayForConfig
+static uint8_t     gDisplayTimeout = 5;  // seconds before returning to idle (Phase 4)
+
+// ---------------------------------------------------------------------------
+// MQTT topic helpers — built from GATE_ID at runtime
+// ---------------------------------------------------------------------------
+
+static String topicEvent()    { return String("parking/") + GATE_ID + "/event"; }
+static String topicGreeting() { return String("parking/") + GATE_ID + "/greeting"; }
+static String topicConfig()   { return String("parking/") + GATE_ID + "/config"; }
+static String topicReset()    { return String("parking/") + GATE_ID + "/reset"; }
+
+// ---------------------------------------------------------------------------
+// NTP / clock
+// ---------------------------------------------------------------------------
+
+static String        gClockStr          = "--:--:--";
+static unsigned long gLastClockUpdateMs = 0;
+
+// ---------------------------------------------------------------------------
+// Hardware pin configuration
+// ---------------------------------------------------------------------------
 
 #if defined(WF1)
 HUB75_I2S_CFG::i2s_pins _pins_x1 = {
@@ -92,6 +128,11 @@ VirtualMatrixPanel* virtual_display = nullptr;
 size_t activeDisplayConfigIndex = 0;
 bool gFlipBottomPanels = true;
 unsigned long lastCalibSwitchMs = 0;
+
+// ---------------------------------------------------------------------------
+// Virtual panel with coordinate transform for serpentine (ZZ) layout.
+// P1 (index 0) and P3 (index 2) are rotated 180° to match physical install.
+// ---------------------------------------------------------------------------
 
 class MqttDisplayVirtualPanel : public VirtualMatrixPanel {
 public:
@@ -134,6 +175,35 @@ unsigned long lastMqttAttemptMs = 0;
 bool redrawNeeded = true;
 bool wifiConnectedShown = false;
 bool mqttConnectedShown = false;
+
+// ---------------------------------------------------------------------------
+// NVS config load / save
+// ---------------------------------------------------------------------------
+
+void loadConfig() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, true); // read-only
+  gGate.gateName  = prefs.getString("gate_name",   GATE_NAME);
+  gBrightness     = prefs.getUChar("brightness",   96);
+  gDisplayTimeout = prefs.getUChar("disp_timeout", 5);
+  prefs.end();
+  Serial.printf("[config] loaded: gate=%s bright=%u timeout=%u\n",
+                gGate.gateName.c_str(), gBrightness, gDisplayTimeout);
+}
+
+void saveConfig() {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false); // read-write
+  prefs.putString("gate_name",   gGate.gateName);
+  prefs.putUChar("brightness",   gBrightness);
+  prefs.putUChar("disp_timeout", gDisplayTimeout);
+  prefs.end();
+  Serial.println("[config] saved to NVS");
+}
+
+// ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
 
 void targetFillScreen(uint16_t color) {
   if (virtual_display) virtual_display->fillScreen(color);
@@ -202,23 +272,9 @@ bool tryParseNumber(const String& text, float& valueOut) {
   return (endPtr != c) && (*endPtr == '\0');
 }
 
-String formatSensorValue(int index, const String& rawPayload) {
-  String payload = sanitizePayload(rawPayload);
-  if (payload.length() == 0) return "--";
-
-  float numeric = 0.0f;
-  if (tryParseNumber(payload, numeric)) {
-    char buff[24];
-    if (index == 0 || index == 1) {
-      snprintf(buff, sizeof(buff), "%.1f %s", static_cast<double>(numeric), kSensors[index].unit);
-    } else {
-      snprintf(buff, sizeof(buff), "%.0f %s", static_cast<double>(numeric), kSensors[index].unit);
-    }
-    return String(buff);
-  }
-
-  return payload + " " + kSensors[index].unit;
-}
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 
 void renderStatus(const char* line1, const char* line2, uint16_t color) {
   if (!dma_display) return;
@@ -239,23 +295,32 @@ void renderPanels() {
 
   targetFillScreen(0);
 
-  for (int i = 0; i < 4; i++) {
-    const int row = i / VIRTUAL_COLS;
-    const int col = i % VIRTUAL_COLS;
-    const int panelX = col * PANEL_RES_X;
-    const int panelY = row * PANEL_RES_Y;
+  // P1 (row 0): access status
+  targetSetTextDefaults();
+  targetSetTextColor(labelColor);
+  drawCenteredText("STATUS", 0, 1, PANEL_RES_X, 8);
+  targetSetTextColor(valueColor);
+  drawCenteredText(gGate.status, 0, 12, PANEL_RES_X, 12);
 
-    targetSetTextDefaults();
-    targetSetTextSize(1);
-    targetSetTextColor(labelColor);
-    drawCenteredText(String("P") + String(i + 1) + " " + kSensors[i].label, panelX, panelY + 1, PANEL_RES_X, 8);
+  // P2 (row 1): gate name / clock / ANPR status
+  targetSetTextDefaults();
+  targetSetTextColor(labelColor);
+  drawCenteredText(gGate.gateName, 0, PANEL_RES_Y + 1, PANEL_RES_X, 8);
+  targetSetTextColor(valueColor);
+  drawCenteredText(gClockStr, 0, PANEL_RES_Y + 12, PANEL_RES_X, 8);
+  drawCenteredText(gGate.anprStatus.length() ? gGate.anprStatus : "--",
+                   0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
 
-    String value = sensorValues[i];
-    if (value.length() > 9) value = value.substring(0, 9);
-    targetSetTextSize(1);
-    targetSetTextColor(valueColor);
-    drawCenteredText(value, panelX, panelY + 12, PANEL_RES_X, 12);
-  }
+  // P3 (row 2): plate number
+  targetSetTextDefaults();
+  targetSetTextColor(valueColor);
+  drawCenteredText(gGate.plate.length() ? gGate.plate : "-- ---- --",
+                   0, PANEL_RES_Y * 2 + 12, PANEL_RES_X, 12);
+
+  // P4 (row 3): greeting
+  targetSetTextDefaults();
+  targetSetTextColor(labelColor);
+  drawCenteredText(gGate.greeting, 0, PANEL_RES_Y * 3 + 12, PANEL_RES_X, 12);
 }
 
 void renderCalibrationPattern() {
@@ -289,6 +354,125 @@ void renderCalibrationPattern() {
   drawCenteredText(cfg.name, 0, (PANEL_RES_Y * VIRTUAL_ROWS) - 10, PANEL_RES_X * VIRTUAL_COLS, 8);
 }
 
+// ---------------------------------------------------------------------------
+// MQTT topic handlers
+// JSON parsing will be implemented in plan 01-02 (requires ArduinoJson).
+// For now, handlers accept raw payload and populate GateState with placeholders.
+// ---------------------------------------------------------------------------
+
+void handleEventTopic(const String& payload) {
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, payload);
+
+  if (err) {
+    Serial.printf("[event] JSON parse error: %s | payload: %s\n",
+                  err.c_str(), payload.c_str());
+    gGate.status = "idle";
+    redrawNeeded = true;
+    return;
+  }
+
+  // Ekstrak fields — gunakan default jika field tidak ada
+  const char* status = doc["status"]      | "idle";
+  const char* plate  = doc["plate"]       | "";
+  const char* anpr   = doc["anpr_status"] | "";
+  const char* gate   = doc["gate_name"]   | gGate.gateName.c_str();
+
+  // Validasi nilai status enum
+  const String s(status);
+  if (s == "granted" || s == "denied" || s == "scanning" || s == "idle") {
+    gGate.status = s;
+  } else {
+    gGate.status = "idle";
+    Serial.printf("[event] unknown status value: %s\n", status);
+  }
+
+  gGate.plate      = String(plate);
+  gGate.anprStatus = String(anpr);
+  if (strlen(gate) > 0) gGate.gateName = String(gate);
+
+  redrawNeeded = true;
+  Serial.printf("[event] status=%s plate=%s anpr=%s gate=%s\n",
+                gGate.status.c_str(), gGate.plate.c_str(),
+                gGate.anprStatus.c_str(), gGate.gateName.c_str());
+}
+
+void handleGreetingTopic(const String& payload) {
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, payload);
+
+  if (err) {
+    Serial.printf("[greeting] JSON parse error: %s | payload: %s\n",
+                  err.c_str(), payload.c_str());
+    return;
+  }
+
+  // Hanya update jika field "text" ada dan tidak kosong
+  const char* text = doc["text"] | "";
+  if (strlen(text) > 0) {
+    gGate.greeting = String(text);
+    redrawNeeded   = true;
+    Serial.printf("[greeting] text=%s\n", gGate.greeting.c_str());
+  } else {
+    Serial.println("[greeting] 'text' field missing or empty — greeting unchanged");
+  }
+  // Field "scroll" dan "color" diimplementasi di Phase 3 rendering
+}
+
+void handleConfigTopic(const String& payload) {
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, payload);
+
+  if (err) {
+    Serial.printf("[config] JSON parse error: %s | payload: %s\n",
+                  err.c_str(), payload.c_str());
+    return;
+  }
+
+  bool changed = false;
+
+  // Update hanya field yang ada dalam payload (partial update supported)
+  if (doc["gate_name"].is<const char*>()) {
+    const String name = doc["gate_name"].as<String>();
+    if (name.length() > 0) {
+      gGate.gateName = name;
+      changed = true;
+    }
+  }
+
+  if (doc["brightness"].is<int>()) {
+    gBrightness = static_cast<uint8_t>(doc["brightness"].as<int>());
+    if (dma_display) dma_display->setBrightness8(gBrightness);
+    changed = true;
+  }
+
+  if (doc["display_timeout"].is<int>()) {
+    gDisplayTimeout = static_cast<uint8_t>(doc["display_timeout"].as<int>());
+    changed = true;
+  }
+
+  if (changed) {
+    saveConfig();
+    redrawNeeded = true;
+    Serial.printf("[config] updated: gate=%s bright=%u timeout=%u\n",
+                  gGate.gateName.c_str(), gBrightness, gDisplayTimeout);
+  } else {
+    Serial.println("[config] no recognized fields in payload — no change");
+  }
+}
+
+void handleResetTopic(const String& /*payload*/) {
+  gGate.status     = "idle";
+  gGate.plate      = "";
+  gGate.anprStatus = "";
+  redrawNeeded     = true;
+  Serial.println("[reset] display reset to idle");
+}
+
+// ---------------------------------------------------------------------------
+// MQTT callback — routes by topic to handler functions
+// ---------------------------------------------------------------------------
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String value;
   value.reserve(length);
@@ -297,15 +481,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   value.trim();
 
-  for (int i = 0; i < 4; i++) {
-    if (strcmp(topic, kSensors[i].topic) == 0) {
-      sensorValues[i] = formatSensorValue(i, value);
-      redrawNeeded = true;
-      Serial.printf("MQTT update [%s] = %s\n", topic, sensorValues[i].c_str());
-      return;
-    }
-  }
+  const String t(topic);
+  if      (t == topicEvent())    handleEventTopic(value);
+  else if (t == topicGreeting()) handleGreetingTopic(value);
+  else if (t == topicConfig())   handleConfigTopic(value);
+  else if (t == topicReset())    handleResetTopic(value);
+  else Serial.printf("[mqtt] unknown topic: %s\n", topic);
 }
+
+// ---------------------------------------------------------------------------
+// Connectivity
+// ---------------------------------------------------------------------------
 
 void connectWiFiIfNeeded() {
   if (WiFi.status() == WL_CONNECTED) {
@@ -346,12 +532,17 @@ void connectMqttIfNeeded() {
   }
 
   Serial.println("MQTT connected");
-  for (int i = 0; i < 4; i++) {
-    mqttClient.subscribe(kSensors[i].topic);
-    Serial.printf("Subscribed: %s\n", kSensors[i].topic);
-  }
+  mqttClient.subscribe(topicEvent().c_str());
+  mqttClient.subscribe(topicGreeting().c_str());
+  mqttClient.subscribe(topicConfig().c_str());
+  mqttClient.subscribe(topicReset().c_str());
+  Serial.printf("Subscribed to parking/%s/* topics\n", GATE_ID);
   mqttConnectedShown = false;
 }
+
+// ---------------------------------------------------------------------------
+// Display initialisation
+// ---------------------------------------------------------------------------
 
 void setupDisplayForConfig(size_t configIndex) {
   if (configIndex >= (sizeof(kDisplayConfigs) / sizeof(kDisplayConfigs[0]))) configIndex = 0;
@@ -394,12 +585,41 @@ void setupDisplayForConfig(size_t configIndex) {
   redrawNeeded = true;
 }
 
+// ---------------------------------------------------------------------------
+// NTP clock update — returns true if gClockStr changed
+// ---------------------------------------------------------------------------
+
+bool updateClock() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return false; // Not synced yet — leave gClockStr as "--:--:--"
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  if (gClockStr != buf) {
+    gClockStr = buf;
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Arduino entry points
+// ---------------------------------------------------------------------------
+
 void setup() {
   Serial.begin(115200);
   setupDisplayForConfig(LOCKED_DISPLAY_CONFIG_INDEX);
+  loadConfig();
+  dma_display->setBrightness8(gBrightness);
 
+  mqttClient.setBufferSize(512);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
+
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com");
+  Serial.println("[ntp] configured (UTC+7)");
 
   if (CALIBRATION_MODE) {
     renderCalibrationPattern();
@@ -427,6 +647,15 @@ void loop() {
 
   if (mqttClient.connected()) {
     mqttClient.loop();
+  }
+
+  // Update clock every second
+  const unsigned long clockNowMs = millis();
+  if (clockNowMs - gLastClockUpdateMs >= 1000) {
+    gLastClockUpdateMs = clockNowMs;
+    if (updateClock()) {
+      redrawNeeded = true;
+    }
   }
 
   if (redrawNeeded) {
