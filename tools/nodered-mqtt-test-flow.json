@@ -1,0 +1,357 @@
+[
+  {
+    "id": "tab-parking-test",
+    "type": "tab",
+    "label": "Parking Gate MQTT Test",
+    "disabled": false,
+    "info": "Test flow untuk parking gate LED matrix display.\nMQTT broker: 10.10.6.99:1883\nGate ID: gate-01"
+  },
+  {
+    "id": "mqtt-broker-parking",
+    "type": "mqtt-broker",
+    "name": "Parking MQTT Broker",
+    "broker": "10.10.6.99",
+    "port": "1883",
+    "clientid": "nodered-parking-test",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthPayload": "",
+    "closeTopic": "",
+    "closeQos": "0",
+    "closePayload": "",
+    "willTopic": "",
+    "willQos": "0",
+    "willPayload": "",
+    "credentials": {
+      "user": "app",
+      "password": "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ"
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SECTION 1: RANDOM EVENT (auto-repeat + manual)
+  // ═══════════════════════════════════════════════════════
+
+  {
+    "id": "inject-auto-event",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Auto Every 4s",
+    "props": [{ "p": "payload" }],
+    "repeat": "4",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 80,
+    "wires": [["fn-random-event"]]
+  },
+  {
+    "id": "inject-manual-event",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Manual Trigger",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 120,
+    "wires": [["fn-random-event"]]
+  },
+  {
+    "id": "fn-random-event",
+    "type": "function",
+    "z": "tab-parking-test",
+    "name": "Random Event Generator",
+    "func": "\n// ── Plate number generator ─────────────────────────────\nconst prefixes = ['B', 'D', 'F', 'E', 'Z', 'H', 'G', 'L', 'W', 'N', 'P', 'S', 'T', 'R', 'K'];\nconst suffixes = ['ABC', 'BCD', 'CDE', 'DEF', 'EFG', 'XYZ', 'AAA', 'BBB', 'RFQ', 'ZZZ', 'ASD', 'QWE'];\nconst prefix = prefixes[Math.floor(Math.random() * prefixes.length)];\nconst number = Math.floor(Math.random() * 8999) + 1000; // 1000-9999\nconst suffix = suffixes[Math.floor(Math.random() * suffixes.length)];\nconst plate  = `${prefix} ${number} ${suffix}`;\n\n// ── Status ─────────────────────────────────────────────\nconst statuses   = ['granted', 'denied', 'scanning', 'idle'];\nconst weights    = [4, 3, 2, 1]; // granted lebih sering\nconst totalW     = weights.reduce((a, b) => a + b, 0);\nlet rand = Math.random() * totalW, statusIdx = 0;\nfor (let i = 0; i < weights.length; i++) {\n    rand -= weights[i];\n    if (rand <= 0) { statusIdx = i; break; }\n}\nconst status = statuses[statusIdx];\n\n// ── ANPR status ────────────────────────────────────────\nconst anprOptions = ['detected', 'not_detected', 'low_confidence'];\nconst anprWeights = [6, 2, 2];\nlet randA = Math.random() * 10, anprIdx = 0;\nfor (let i = 0; i < anprWeights.length; i++) {\n    randA -= anprWeights[i];\n    if (randA <= 0) { anprIdx = i; break; }\n}\nconst anpr_status = anprOptions[anprIdx];\n\n// ── Payload ────────────────────────────────────────────\nconst payload = {\n    status:      status,\n    plate:       (status === 'idle') ? '' : plate,\n    anpr_status: anpr_status,\n    gate_name:   'Gate A',\n    timestamp:   Math.floor(Date.now() / 1000)\n};\n\nmsg.topic   = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(payload);\n\n// Log di debug\nnode.warn(`[event] status=${status} plate=${payload.plate} anpr=${anpr_status}`);\n\nreturn msg;\n",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 100,
+    "wires": [["mqtt-out-event", "debug-event"]]
+  },
+  {
+    "id": "mqtt-out-event",
+    "type": "mqtt out",
+    "z": "tab-parking-test",
+    "name": "→ parking/gate-01/event",
+    "topic": "",
+    "qos": "0",
+    "retain": false,
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt-broker-parking",
+    "x": 620,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "debug-event",
+    "type": "debug",
+    "z": "tab-parking-test",
+    "name": "Event Debug",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "auto",
+    "x": 620,
+    "y": 140,
+    "wires": []
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SECTION 2: STATUS MANUAL TRIGGER (per status)
+  // ═══════════════════════════════════════════════════════
+
+  {
+    "id": "inject-granted",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "GRANTED",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"status\":\"granted\",\"plate\":\"D 1234 ABC\",\"anpr_status\":\"detected\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 220,
+    "wires": [["fn-status-inject"]]
+  },
+  {
+    "id": "inject-denied",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "DENIED",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"status\":\"denied\",\"plate\":\"B 9999 XYZ\",\"anpr_status\":\"detected\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 260,
+    "wires": [["fn-status-inject"]]
+  },
+  {
+    "id": "inject-scanning",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "SCANNING",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"status\":\"scanning\",\"plate\":\"\",\"anpr_status\":\"low_confidence\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 300,
+    "wires": [["fn-status-inject"]]
+  },
+  {
+    "id": "inject-idle",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "IDLE",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"status\":\"idle\",\"plate\":\"\",\"anpr_status\":\"\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 340,
+    "wires": [["fn-status-inject"]]
+  },
+  {
+    "id": "fn-status-inject",
+    "type": "function",
+    "z": "tab-parking-test",
+    "name": "Set Topic",
+    "func": "msg.payload.timestamp = Math.floor(Date.now() / 1000);\nmsg.topic = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(msg.payload);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 280,
+    "wires": [["mqtt-out-event"]]
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SECTION 3: GREETING UPDATE
+  // ═══════════════════════════════════════════════════════
+
+  {
+    "id": "inject-greeting-random",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Random Greeting",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 440,
+    "wires": [["fn-random-greeting"]]
+  },
+  {
+    "id": "inject-greeting-welcome",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Selamat Datang",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"text\":\"Selamat Datang\",\"scroll\":false,\"color\":\"white\"}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 480,
+    "wires": [["fn-greeting-topic"]]
+  },
+  {
+    "id": "inject-greeting-scroll",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Scroll Text",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"text\":\"Selamat Datang di Gedung Utama\",\"scroll\":true,\"color\":\"yellow\"}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 520,
+    "wires": [["fn-greeting-topic"]]
+  },
+  {
+    "id": "fn-random-greeting",
+    "type": "function",
+    "z": "tab-parking-test",
+    "name": "Random Greeting Generator",
+    "func": "const texts  = ['Selamat Datang', 'Hati-hati di Jalan', 'Terima Kasih', 'Selamat Bekerja', 'Semangat!', 'Have a Nice Day'];\nconst colors = ['white', 'yellow', 'cyan'];\nconst text   = texts[Math.floor(Math.random() * texts.length)];\nconst color  = colors[Math.floor(Math.random() * colors.length)];\nconst scroll = text.length > 10;\n\nmsg.topic   = 'parking/gate-01/greeting';\nmsg.payload = JSON.stringify({ text, scroll, color });\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 440,
+    "wires": [["mqtt-out-greeting"]]
+  },
+  {
+    "id": "fn-greeting-topic",
+    "type": "function",
+    "z": "tab-parking-test",
+    "name": "Set Topic",
+    "func": "msg.topic = 'parking/gate-01/greeting';\nmsg.payload = JSON.stringify(msg.payload);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 500,
+    "wires": [["mqtt-out-greeting"]]
+  },
+  {
+    "id": "mqtt-out-greeting",
+    "type": "mqtt out",
+    "z": "tab-parking-test",
+    "name": "→ parking/gate-01/greeting",
+    "topic": "",
+    "qos": "0",
+    "retain": false,
+    "broker": "mqtt-broker-parking",
+    "x": 620,
+    "y": 480,
+    "wires": []
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SECTION 4: RESET
+  // ═══════════════════════════════════════════════════════
+
+  {
+    "id": "inject-reset",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "RESET Display",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 620,
+    "wires": [["mqtt-out-reset"]]
+  },
+  {
+    "id": "mqtt-out-reset",
+    "type": "mqtt out",
+    "z": "tab-parking-test",
+    "name": "→ parking/gate-01/reset",
+    "topic": "parking/gate-01/reset",
+    "qos": "0",
+    "retain": false,
+    "broker": "mqtt-broker-parking",
+    "x": 380,
+    "y": 620,
+    "wires": []
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SECTION 5: CONFIG UPDATE
+  // ═══════════════════════════════════════════════════════
+
+  {
+    "id": "inject-config",
+    "type": "inject",
+    "z": "tab-parking-test",
+    "name": "Update Config",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"gate_name\":\"Gate A - Test\",\"display_timeout\":5,\"brightness\":96}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 700,
+    "wires": [["fn-config-topic"]]
+  },
+  {
+    "id": "fn-config-topic",
+    "type": "function",
+    "z": "tab-parking-test",
+    "name": "Set Topic",
+    "func": "msg.topic = 'parking/gate-01/config';\nmsg.payload = JSON.stringify(msg.payload);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 360,
+    "y": 700,
+    "wires": [["mqtt-out-config"]]
+  },
+  {
+    "id": "mqtt-out-config",
+    "type": "mqtt out",
+    "z": "tab-parking-test",
+    "name": "→ parking/gate-01/config",
+    "topic": "",
+    "qos": "0",
+    "retain": false,
+    "broker": "mqtt-broker-parking",
+    "x": 600,
+    "y": 700,
+    "wires": []
+  }
+]
