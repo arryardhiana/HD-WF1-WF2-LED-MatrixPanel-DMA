@@ -366,13 +366,35 @@ void renderPanels() {
 
   targetFillScreen(0);
 
-  // P1 (row 0): full color status block
-  const uint16_t p1Color = getStatusColor(gGate.status);
-  if (p1Color) {
-    if (virtual_display) virtual_display->fillRect(0, 0, PANEL_RES_X, PANEL_RES_Y, p1Color);
-    else dma_display->fillRect(0, 0, PANEL_RES_X, PANEL_RES_Y, p1Color);
+  // P1 (row 0): traffic lamp — 3 circles horizontal (red | yellow | green)
+  {
+    const uint16_t dimColor    = dma_display->color565(25,  25,  25);
+    const uint16_t redColor    = dma_display->color565(220,  0,   0);
+    const uint16_t yellowColor = dma_display->color565(220, 180,  0);
+    const uint16_t greenColor  = dma_display->color565(0,   220,  0);
+
+    const int cy = PANEL_RES_Y / 2;   // 16 — vertical center of P1
+    const int r  = 9;
+    // Three circles evenly spaced in 64px: centers at x=11, 32, 53
+    const int cxRed    = 11;
+    const int cxYellow = 32;
+    const int cxGreen  = 53;
+
+    const uint16_t colRed    = (gGate.status == "denied")   ? redColor    : dimColor;
+    const uint16_t colYellow = (gGate.status == "scanning") ? yellowColor : dimColor;
+    const uint16_t colGreen  = (gGate.status == "granted")  ? greenColor  : dimColor;
+
+    if (virtual_display) {
+      virtual_display->fillCircle(cxRed,    cy, r, colRed);
+      virtual_display->fillCircle(cxYellow, cy, r, colYellow);
+      virtual_display->fillCircle(cxGreen,  cy, r, colGreen);
+    } else {
+      dma_display->fillCircle(cxRed,    cy, r, colRed);
+      dma_display->fillCircle(cxYellow, cy, r, colYellow);
+      dma_display->fillCircle(cxGreen,  cy, r, colGreen);
+    }
+    // idle: all 3 circles dim — already handled by dimColor above
   }
-  // idle: stays black from targetFillScreen(0) at start of renderPanels()
 
   // P2 (row 1): gate name / clock / ANPR status
   targetSetTextDefaults();
@@ -426,10 +448,11 @@ void renderPanels() {
   {
     targetSetTextDefaults();
     if (gGate.status == "denied") {
-      // Show instruction to use QR code app when access is denied
+      // 3 lines centered in P4 (each word fits: 7×6=42px, 6×6=36px, 7×6=42px < 64px)
       targetSetTextColor(dma_display->color565(255, 80, 0)); // orange-red
-      targetSetCursor(gGreetingScrollX, PANEL_RES_Y * 3 + 12);
-      targetPrint("Gunakan QRCode SAUNPAD App");
+      drawCenteredText("Gunakan", 0, PANEL_RES_Y * 3 + 3,  PANEL_RES_X, 8);
+      drawCenteredText("QRCODE",  0, PANEL_RES_Y * 3 + 13, PANEL_RES_X, 8);
+      drawCenteredText("SAUNPAD", 0, PANEL_RES_Y * 3 + 23, PANEL_RES_X, 8);
     } else if (gGate.status == "scanning") {
       // P4 cleared during scanning — area stays black from targetFillScreen(0) above
     } else {
