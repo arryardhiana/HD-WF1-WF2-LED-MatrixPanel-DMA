@@ -397,17 +397,25 @@ void renderPanels() {
   }
 
   // P2 (row 1): gate name / clock / ANPR status
+  const bool wifiOffline = (WiFi.status() != WL_CONNECTED);
+  const bool mqttOffline = gMqttWasConnected && gMqttDisconnectedMs > 0 &&
+                           (millis() - gMqttDisconnectedMs >= 5000UL);
+
   targetSetTextDefaults();
   targetSetTextColor(labelColor);
   drawCenteredText(gGate.gateName, 0, PANEL_RES_Y + 1, PANEL_RES_X, 8);
   targetSetTextColor(valueColor);
   drawCenteredText(gClockStr, 0, PANEL_RES_Y + 12, PANEL_RES_X, 8);
   {
-    const bool mqttOffline = gMqttWasConnected && gMqttDisconnectedMs > 0 &&
-                             (millis() - gMqttDisconnectedMs >= 5000UL);
-    if (mqttOffline) {
-      targetSetTextColor(dma_display->color565(180, 0, 0)); // dim red
+    if (wifiOffline) {
+      targetSetTextColor(dma_display->color565(255, 60, 0)); // orange — WiFi putus
+      drawCenteredText("NO WIFI", 0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
+    } else if (mqttOffline) {
+      targetSetTextColor(dma_display->color565(180, 0, 0)); // dim red — MQTT putus
       drawCenteredText("OFFLINE", 0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
+    } else if (gGate.status == "scanning") {
+      targetSetTextColor(dma_display->color565(220, 180, 0)); // kuning
+      drawCenteredText("Scanning..", 0, PANEL_RES_Y + 23, PANEL_RES_X, 8);
     } else {
       targetSetTextColor(valueColor);
       drawCenteredText(gGate.anprStatus.length() ? gGate.anprStatus : "--",
@@ -444,10 +452,16 @@ void renderPanels() {
     targetSetTextSize(1);
   }
 
-  // P4 (row 3): denied override OR scanning (blank) OR greeting — color + optional scroll
+  // P4 (row 3): offline info OR denied override OR scanning (blank) OR greeting
   {
     targetSetTextDefaults();
-    if (gGate.status == "denied") {
+    if (wifiOffline || mqttOffline) {
+      // "Hubungi / UPT / Lingkungan" — 3 baris: 42px, 18px, 60px < 64px
+      targetSetTextColor(dma_display->color565(255, 60, 0)); // orange
+      drawCenteredText("Hubungi",    0, PANEL_RES_Y * 3 + 3,  PANEL_RES_X, 8);
+      drawCenteredText("UPT",        0, PANEL_RES_Y * 3 + 13, PANEL_RES_X, 8);
+      drawCenteredText("Lingkungan", 0, PANEL_RES_Y * 3 + 23, PANEL_RES_X, 8);
+    } else if (gGate.status == "denied") {
       // 3 lines centered in P4 (each word fits: 7×6=42px, 6×6=36px, 7×6=42px < 64px)
       targetSetTextColor(dma_display->color565(255, 80, 0)); // orange-red
       drawCenteredText("Gunakan", 0, PANEL_RES_Y * 3 + 3,  PANEL_RES_X, 8);
