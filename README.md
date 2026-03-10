@@ -1,91 +1,350 @@
-# HD-WF1-WF2-LED-MatrixPanel-DMA
-Custom firmware based on my [HUB75 DMA library](https://github.com/mrfaptastic/ESP32-HUB75-MatrixPanel-DMA),  for the:
+# Parking Gate LED Matrix Display
 
-* Huidu WF1 LED Controller Card based on the ESP32-S2; or
-* Huidu WF2 LED Controller Card based on the ESP32-S3.
+Firmware untuk **Huidu WF1/WF2** (ESP32-S2/S3) yang menampilkan status akses kendaraan, hasil scan ANPR, nomor plat, dan informasi gate secara real-time pada 4 panel LED HUB75 64×32 yang disusun vertikal — dikendalikan via MQTT JSON.
 
-## Features of example code
-- **Multiple Display Modes**: Three different visual modes accessible via button control
-- **Robust Real-Time Clock**: Enhanced RTC handling with NTP synchronization, data validation, and automatic fallback
-- **Deep Sleep Support**: Power-saving sleep mode with button wake-up
-- **WiFi Connectivity**: OTA firmware updates via web interface
-- **Debounced Button Control**: Reliable button handling with short/long press detection
-- **Animated Graphics**: Colorful animations and bouncing effects
+---
 
-## Huidu WF1
-These can be bought for about USD $6 and are quite good as they come with a battery and a Real Time Clock (BM8563), and a push button connected to GPIO 11 for your use.
- 
-Seller #1: [ https://www.aliexpress.com/item/1005005038544582.html ](https://www.aliexpress.com/item/1005006075952980.html)
+## Daftar Isi
 
-Seller #2: (https://www.aliexpress.com/item/1005005556957598.html) 
+- [Hardware](#hardware)
+- [Layout Panel](#layout-panel)
+- [Cara Flash Pertama Kali](#cara-flash-pertama-kali)
+- [Cara Flash via OTA](#cara-flash-via-ota)
+- [Konfigurasi Firmware](#konfigurasi-firmware)
+- [MQTT Topics & Payload](#mqtt-topics--payload)
+- [Tampilan per Panel](#tampilan-per-panel)
+- [Testing dengan Node-RED](#testing-dengan-node-red)
+- [Libraries](#libraries)
 
-There are probably other sellers on Aliexpress as well. I give no guarantees that these will use the ESP32-S2, check the model version!
+---
 
-![image](https://github.com/mrfaptastic/HD-WF1-LED-MatrixPanel-DMA/assets/12006953/ccdff75b-b764-424a-b923-dbac86f1b151)
+## Hardware
 
-### How to flash?
- 
-To put the board into Download mode, simply bridge the 2 pads near the MicroUSB port, then connect the board into your PC using a [USB-A to USB-A cable](https://www.aliexpress.com/item/1005006854476947.html), connecting to the **USB-A port** on the WF1 (not the Micro USB input). It is NOT possible to program the board using the onboard Micro USB port. Thanks [Rappbledor](https://github.com/mrfaptastic/HD-WF1-LED-MatrixPanel-DMA/issues/3)
+| Komponen | Spesifikasi |
+|----------|-------------|
+| Board | Huidu WF1 (ESP32-S2) atau WF2 (ESP32-S3) |
+| Panel LED | HUB75 64×32 pixel, 4 buah |
+| Susunan | 1×4 vertikal ke bawah (serpentine ZZ chain) |
+| Total resolusi | 64×128 pixel |
+| RTC | BM8563 built-in (I2C SDA=41, SCL=42) |
+| HUB75 port | 75EX1 |
 
-![image](https://github.com/user-attachments/assets/821aea15-4616-4b60-a251-4f1255f092e0)
+### Huidu WF1 (ESP32-S2)
 
+Board murah ~$6, dilengkapi baterai, RTC BM8563, dan tombol di GPIO 11.
 
-Alternatively, solder a micro-usb to the exposed pins underneath to gain access to the D+ and D- lines connected to the USB-A port on the device. The ESP32-S2 routes the USB D+ and D- signals to GPIOs 20 and 19 respectively. 
+- [Seller #1 AliExpress](https://www.aliexpress.com/item/1005005038544582.html)
+- [Seller #2 AliExpress](https://www.aliexpress.com/item/1005005556957598.html)
 
-![image](https://github.com/mrfaptastic/HD-WF1-LED-MatrixPanel-DMA/assets/12006953/fba33a4d-9737-4366-9a3b-776bec22ab2f)
+### Huidu WF2 (ESP32-S3)
 
-The above has been successfully tested on board is rev 7.0.1-1 and it comes with an ESP32-S2 with 4MB flash and no PS Ram.
+Lebih mudah di-flash — cukup kabel USB-A ke USB-C standar.
 
-## Huidu WF2
+> **Catatan:** WF2 punya 2 port HUB75 (`75EX1` dan `75EX2`) tapi **tidak bisa digunakan bersamaan**. Firmware ini menggunakan `75EX1`.
 
-HD-WF2 boards are easily flashed with USB-A to USB-C cables often used with phone chargers, so no need to look for rare USB-A to USB-A cables. You just need to plug type-c port to you laptop's type-c port (or some USB hub with type-c) and plug USB-A to the board, voila... :)
+---
 
-The best fit board definition for PlatformIO is:
-
-`board = wifiduino32s3`
-
-and if you need serial debug messages via USB-A port just add
+## Layout Panel
 
 ```
-build_flags =
-    -DARDUINO_USB_CDC_ON_BOOT=1
+┌──────────────────────────────────┐
+│  P1 — Status Akses (64×32)       │  Traffic lamp 3 lingkaran:
+│  ( )  ( )  ( )                   │  Merah=Denied | Kuning=Scanning | Hijau=Granted
+│  dim  dim  dim  ← idle           │  Idle: semua dim
+└──────────────────────────────────┘
+┌──────────────────────────────────┐
+│  P2 — Info Gate (64×32)          │  Baris 1: Nama gate (biru)
+│  Gate A                          │  Baris 2: Jam real-time NTP (hijau)
+│  14:32:05  10/03/2026            │  Baris 3: Status ANPR / "OFFLINE" (jika disconnect)
+│  detected                        │
+└──────────────────────────────────┘
+┌──────────────────────────────────┐
+│  P3 — Nomor Plat (64×32)         │  Font besar (textSize 2), 2 baris jika perlu
+│     D 1234                       │  Split otomatis di spasi ke-2
+│       ABC                        │  Default: "------" saat idle
+└──────────────────────────────────┘
+┌──────────────────────────────────┐
+│  P4 — Greeting / Info (64×32)    │  Idle/Granted: greeting MQTT (2 baris jika panjang)
+│    Selamat                       │  Denied: "Gunakan / QRCODE / SAUNPAD"
+│     Datang                       │  Scanning: kosong (blank)
+└──────────────────────────────────┘
 ```
 
-Limitations:
+---
 
-* Whilst the WF-2 has two HUB75 ('75EX1' and '75EX2') connectors. It is NOT possible to drive BOTH at once. You can only use wither the 75EX1 or 75EX2 port at any time to drive a single HUB75 panel, or a chain of panels.
-* 75EX2 ports 'E' pin does not appear to be mapped to a GPIO on the S3, as such, can not be used to drive a HUB75 LED Panel that requires an 'E' input (for example, a 64x64 pixel LED Matrix).
+## Cara Flash Pertama Kali
 
+### WF2 (ESP32-S3) — Lebih mudah
 
-[Source](https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA/discussions/667#discussioncomment-10438431)
+1. Hubungkan kabel USB-A ke USB-C dari board ke laptop
+2. Build & upload:
+   ```bash
+   ~/.platformio/penv/bin/platformio run --target upload -e huidu_hd_wf2
+   ```
+3. Monitor serial:
+   ```bash
+   ~/.platformio/penv/bin/platformio device monitor --baud 115200
+   ```
 
-## GitHub Sketch Output
-The firmware features multiple display modes that can be cycled through using the onboard push button:
+### WF1 (ESP32-S2) — Perlu mode download
 
-### Display Modes
-1. **Clock with Animation** (Default) - Shows time and date with colorful animated background
-2. **Clock Only** - Clean time and date display with no background animation
-3. **Bouncing Squares** - Animated bouncing squares with time overlay
+1. **Bridge 2 pad** di dekat port MicroUSB untuk masuk Download Mode
+2. Hubungkan kabel **USB-A ke USB-A** ke port USB-A di board (bukan MicroUSB)
+3. Upload firmware
 
-### Button Controls
-- **Short Press** (< 2 seconds): Cycles through the display modes
-- **Long Press** (> 2 seconds): Puts the device into deep sleep mode
+> **Perhatian Python:** Jika `pio run` gagal karena Python 3.14, gunakan langsung:
+> ```bash
+> ~/.platformio/penv/bin/platformio run --target upload
+> ```
 
-The device will wake up from deep sleep when the button is pressed again.
+---
 
-### Technical Details
-- Uses Bounce2 library for reliable button debouncing
-- Button state is monitored continuously in the main loop
-- Deep sleep preserves battery life when the display is not needed
-- All three display modes maintain accurate timekeeping
-- Bouncing squares animation uses physics-based collision detection
-- **Enhanced RTC Management**:
-  - Automatic data validation for RTC readings
-  - NTP synchronization every 7 days (configurable)
-  - Fallback from ESP32 internal RTC to external BM8563 RTC
-  - Error handling and recovery for corrupted time data
-  - Detailed logging of time synchronization events
+## Cara Flash via OTA
 
-Designed for a 64x32px LED matrix panel.
+Setelah firmware pertama berhasil di-flash, update selanjutnya bisa via WiFi tanpa kabel.
 
-![image](https://github.com/user-attachments/assets/d7293beb-f293-4741-9fbf-6555be1db297)
+**Konfigurasi `platformio.ini`:**
+```ini
+upload_protocol = espota
+upload_port = parking-gate-01.local
+upload_flags = --auth=ota-parking
+```
+
+**Upload:**
+```bash
+~/.platformio/penv/bin/platformio run --target upload -e huidu_hd_wf2
+```
+
+**Info OTA:**
+| Parameter | Value |
+|-----------|-------|
+| Hostname | `parking-{GATE_ID}` (contoh: `parking-gate-01`) |
+| Password | `ota-parking` |
+| Port | 3232 (ArduinoOTA default) |
+
+> Jika hostname tidak resolve, gunakan IP address langsung sebagai `upload_port`.
+
+---
+
+## Konfigurasi Firmware
+
+Edit konstanta di bagian atas `src/HD-WF1-WF2-LED-MatrixPanel-DMA.ino.cpp`:
+
+```cpp
+// WiFi
+static const char* WIFI_SSID = "NamaWiFi";
+static const char* WIFI_PASS = "PasswordWiFi";
+
+// MQTT Broker
+static const char* MQTT_HOST = "10.10.6.99";
+static const uint16_t MQTT_PORT = 1883;
+static const char* MQTT_USER = "app";
+static const char* MQTT_PASS = "password";
+
+// OTA
+static const char* OTA_PASSWORD = "ota-parking";
+
+// Identitas gate — ubah per device
+static const char* GATE_ID   = "gate-01";   // digunakan di MQTT topic
+static const char* GATE_NAME = "Gate A";    // nama default di P2
+```
+
+> `GATE_ID` menentukan MQTT topic yang di-subscribe: `parking/{GATE_ID}/*`
+> Setiap device di gate yang berbeda harus punya `GATE_ID` unik.
+
+---
+
+## MQTT Topics & Payload
+
+Semua topic menggunakan prefix `parking/{gate_id}/`.
+
+### Subscribe Topics
+
+| Topic | Fungsi |
+|-------|--------|
+| `parking/{gate_id}/event` | Event akses kendaraan (status, plat, ANPR) |
+| `parking/{gate_id}/greeting` | Update teks greeting di P4 |
+| `parking/{gate_id}/config` | Update konfigurasi runtime (disimpan ke flash) |
+| `parking/{gate_id}/reset` | Reset display ke idle |
+
+---
+
+### `parking/{gate_id}/event`
+
+Dikirim oleh sistem ANPR setiap ada kendaraan terdeteksi.
+
+```json
+{
+  "status": "granted",
+  "plate": "D 1234 ABC",
+  "anpr_status": "detected",
+  "gate_name": "Gate A",
+  "timestamp": 1741478400
+}
+```
+
+| Field | Tipe | Nilai | Keterangan |
+|-------|------|-------|------------|
+| `status` | string | `granted` \| `denied` \| `scanning` \| `idle` | Menentukan warna P1 |
+| `plate` | string | `"D 1234 ABC"` | Nomor plat, ditampilkan di P3 |
+| `anpr_status` | string | `detected` \| `not_detected` \| `low_confidence` | Ditampilkan di P2 baris 3 |
+| `gate_name` | string | `"Gate A"` | Opsional — override nama gate di P2 |
+| `timestamp` | int | Unix timestamp | Opsional |
+
+**Perilaku P1 berdasarkan `status`:**
+
+| Status | P1 | P4 |
+|--------|----|----|
+| `granted` | Lingkaran hijau menyala | Greeting normal |
+| `denied` | Lingkaran merah menyala | "Gunakan / QRCODE / SAUNPAD" |
+| `scanning` | Lingkaran kuning menyala | Blank (kosong) |
+| `idle` | Semua lingkaran dim | Greeting normal |
+
+---
+
+### `parking/{gate_id}/greeting`
+
+Update teks P4 secara dinamis.
+
+```json
+{
+  "text": "Selamat Datang",
+  "scroll": false,
+  "color": "white"
+}
+```
+
+| Field | Tipe | Default | Keterangan |
+|-------|------|---------|------------|
+| `text` | string | — | Teks yang ditampilkan di P4 |
+| `scroll` | bool | `false` | Scroll horizontal jika teks panjang |
+| `color` | string | `"white"` | `"white"` \| `"yellow"` \| `"cyan"` |
+
+> Partial update didukung — cukup kirim field yang mau diubah.
+
+---
+
+### `parking/{gate_id}/config`
+
+Update konfigurasi runtime, **tersimpan permanen ke flash (NVS)** — bertahan setelah reboot.
+
+```json
+{
+  "gate_name": "Gate A - Main Entrance",
+  "display_timeout": 5,
+  "brightness": 96
+}
+```
+
+| Field | Tipe | Default | Keterangan |
+|-------|------|---------|------------|
+| `gate_name` | string | `"Gate A"` | Nama gate di P2 baris 1 |
+| `display_timeout` | int | `5` | Detik sebelum kembali ke idle. `0` = tidak timeout |
+| `brightness` | int | `96` | Kecerahan panel 0–255 |
+
+**Contoh — ubah nama gate saja:**
+```json
+{"gate_name": "Gate B - Basement"}
+```
+
+**Contoh — redup untuk malam hari:**
+```json
+{"brightness": 30}
+```
+
+---
+
+### `parking/{gate_id}/reset`
+
+Reset display ke idle. Payload kosong atau `{}`.
+
+```json
+{}
+```
+
+---
+
+## Tampilan per Panel
+
+### P1 — Status Akses
+
+Traffic lamp 3 lingkaran horizontal. Yang tidak aktif tampil dim (gelap).
+
+```
+Idle:     ( )  ( )  ( )   semua gelap
+Denied:   (R)  ( )  ( )   merah menyala
+Scanning: ( )  (Y)  ( )   kuning menyala
+Granted:  ( )  ( )  (G)   hijau menyala
+```
+
+### P2 — Info Gate
+
+3 baris teks:
+- **Baris 1:** Nama gate (warna biru)
+- **Baris 2:** Jam real-time dari NTP, format `HH:MM:SS  DD/MM/YYYY`, update tiap detik
+- **Baris 3:** Status ANPR terakhir, atau `OFFLINE` (merah) jika MQTT disconnect > 5 detik
+
+### P3 — Nomor Plat
+
+Font besar (`textSize 2`). Teks di-split otomatis di spasi ke-2:
+- `"D 1234 ABC"` → baris 1: `D 1234`, baris 2: `ABC`
+- Jika terlalu panjang untuk textSize 2 → fallback ke textSize 1 satu baris
+- Default saat idle: `------`
+
+### P4 — Greeting / Info
+
+| Kondisi | Tampilan |
+|---------|----------|
+| `idle` / `granted` | Teks greeting dari MQTT, 2 baris otomatis jika panjang |
+| `denied` | "Gunakan / QRCODE / SAUNPAD" (3 baris, orange-red, centered) |
+| `scanning` | Blank / kosong |
+
+---
+
+## Testing dengan Node-RED
+
+File flow tersedia di `tools/nodered-mqtt-test-flow.json`.
+
+### Import Flow
+
+1. Buka Node-RED
+2. Menu (≡) → **Import** → pilih file `tools/nodered-mqtt-test-flow.json`
+3. Klik **Import** → **Deploy**
+
+### Isi Flow
+
+| Section | Fungsi |
+|---------|--------|
+| **Auto Every 4s** | Generate event acak (status, plat, ANPR) tiap 4 detik |
+| **Manual Trigger** | Trigger 1 event acak |
+| **GRANTED / DENIED / SCANNING / IDLE** | Kirim status spesifik secara manual |
+| **Random Greeting** | Generate greeting acak (teks + warna + scroll) |
+| **Selamat Datang** | Reset greeting ke default |
+| **Scroll Text** | Test teks panjang dengan scroll |
+| **RESET Display** | Kirim reset ke display |
+| **Update Config** | Update gate_name / brightness / timeout |
+
+### Format Plat yang Di-generate
+
+```
+{PREFIX} {1000-9999} {SUFFIX}
+Contoh: D 4521 BCD, B 1337 XYZ, H 9001 ASD
+```
+
+---
+
+## Libraries
+
+| Library | Versi | Fungsi |
+|---------|-------|--------|
+| `ESP32-HUB75-MatrixPanel-DMA` | latest | Driver LED matrix HUB75 |
+| `GFX_Lite` | latest | Rendering teks & grafis |
+| `PubSubClient` | ^2.8 | MQTT client |
+| `ArduinoJson` | ^7.0 | JSON parser payload |
+| `Preferences` | built-in | NVS config persistence |
+| `ArduinoOTA` | built-in | OTA firmware update |
+| `WiFi` + `time.h` | built-in | WiFi + NTP clock |
+
+---
+
+*Last updated: 2026-03-10*
