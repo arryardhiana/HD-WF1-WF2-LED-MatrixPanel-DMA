@@ -33,11 +33,6 @@
       "password": "pB326ddRw46BjTjqRvSCWcnZZSO7i8gZ"
     }
   },
-
-  // ═══════════════════════════════════════════════════════
-  // SECTION 1: RANDOM EVENT (auto-repeat + manual)
-  // ═══════════════════════════════════════════════════════
-
   {
     "id": "inject-auto-event",
     "type": "inject",
@@ -76,7 +71,7 @@
     "type": "function",
     "z": "tab-parking-test",
     "name": "Random Event Generator",
-    "func": "\n// ── Plate number generator ─────────────────────────────\nconst prefixes = ['B', 'D', 'F', 'E', 'Z', 'H', 'G', 'L', 'W', 'N', 'P', 'S', 'T', 'R', 'K'];\nconst suffixes = ['ABC', 'BCD', 'CDE', 'DEF', 'EFG', 'XYZ', 'AAA', 'BBB', 'RFQ', 'ZZZ', 'ASD', 'QWE'];\nconst prefix = prefixes[Math.floor(Math.random() * prefixes.length)];\nconst number = Math.floor(Math.random() * 8999) + 1000; // 1000-9999\nconst suffix = suffixes[Math.floor(Math.random() * suffixes.length)];\nconst plate  = `${prefix} ${number} ${suffix}`;\n\n// ── Status ─────────────────────────────────────────────\nconst statuses   = ['granted', 'denied', 'scanning', 'idle'];\nconst weights    = [4, 3, 2, 1]; // granted lebih sering\nconst totalW     = weights.reduce((a, b) => a + b, 0);\nlet rand = Math.random() * totalW, statusIdx = 0;\nfor (let i = 0; i < weights.length; i++) {\n    rand -= weights[i];\n    if (rand <= 0) { statusIdx = i; break; }\n}\nconst status = statuses[statusIdx];\n\n// ── ANPR status ────────────────────────────────────────\nconst anprOptions = ['detected', 'not_detected', 'low_confidence'];\nconst anprWeights = [6, 2, 2];\nlet randA = Math.random() * 10, anprIdx = 0;\nfor (let i = 0; i < anprWeights.length; i++) {\n    randA -= anprWeights[i];\n    if (randA <= 0) { anprIdx = i; break; }\n}\nconst anpr_status = anprOptions[anprIdx];\n\n// ── Payload ────────────────────────────────────────────\nconst payload = {\n    status:      status,\n    plate:       (status === 'idle') ? '' : plate,\n    anpr_status: anpr_status,\n    gate_name:   'Gate A',\n    timestamp:   Math.floor(Date.now() / 1000)\n};\n\nmsg.topic   = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(payload);\n\n// Log di debug\nnode.warn(`[event] status=${status} plate=${payload.plate} anpr=${anpr_status}`);\n\nreturn msg;\n",
+    "func": "const prefixes = ['B', 'D', 'F', 'E', 'Z', 'H', 'G', 'L', 'W', 'N', 'P', 'S', 'T', 'R', 'K'];\nconst suffixes = ['ABC', 'BCD', 'CDE', 'DEF', 'EFG', 'XYZ', 'AAA', 'BBB', 'RFQ', 'ZZZ', 'ASD', 'QWE'];\nconst prefix = prefixes[Math.floor(Math.random() * prefixes.length)];\nconst number = Math.floor(Math.random() * 8999) + 1000;\nconst suffix = suffixes[Math.floor(Math.random() * suffixes.length)];\nconst plate  = prefix + ' ' + number + ' ' + suffix;\n\nconst statuses = ['granted', 'denied', 'scanning', 'idle'];\nconst weights  = [4, 3, 2, 1];\nconst totalW   = weights.reduce((a, b) => a + b, 0);\nlet rand = Math.random() * totalW, statusIdx = 0;\nfor (let i = 0; i < weights.length; i++) {\n    rand -= weights[i];\n    if (rand <= 0) { statusIdx = i; break; }\n}\nconst status = statuses[statusIdx];\n\nconst anprOptions = ['detected', 'not_detected'];\nconst anpr_status = anprOptions[Math.floor(Math.random() * anprOptions.length)];\n\nconst payload = {\n    status:      status,\n    plate:       (status === 'idle') ? '' : plate,\n    anpr_status: anpr_status,\n    gate_name:   'Gate A',\n    timestamp:   Math.floor(Date.now() / 1000)\n};\n\nmsg.topic   = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(payload);\nnode.warn('[event] status=' + status + ' plate=' + payload.plate + ' anpr=' + anpr_status);\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -90,15 +85,10 @@
     "id": "mqtt-out-event",
     "type": "mqtt out",
     "z": "tab-parking-test",
-    "name": "→ parking/gate-01/event",
+    "name": "parking/gate-01/event",
     "topic": "",
     "qos": "0",
     "retain": false,
-    "respTopic": "",
-    "contentType": "",
-    "userProps": "",
-    "correl": "",
-    "expiry": "",
     "broker": "mqtt-broker-parking",
     "x": 620,
     "y": 100,
@@ -121,11 +111,6 @@
     "y": 140,
     "wires": []
   },
-
-  // ═══════════════════════════════════════════════════════
-  // SECTION 2: STATUS MANUAL TRIGGER (per status)
-  // ═══════════════════════════════════════════════════════
-
   {
     "id": "inject-granted",
     "type": "inject",
@@ -162,7 +147,7 @@
     "props": [{ "p": "payload" }],
     "repeat": "",
     "once": false,
-    "payload": "{\"status\":\"scanning\",\"plate\":\"\",\"anpr_status\":\"low_confidence\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payload": "{\"status\":\"scanning\",\"plate\":\"\",\"anpr_status\":\"not_detected\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
     "payloadType": "json",
     "x": 140,
     "y": 300,
@@ -194,11 +179,6 @@
     "y": 280,
     "wires": [["mqtt-out-event"]]
   },
-
-  // ═══════════════════════════════════════════════════════
-  // SECTION 3: GREETING UPDATE
-  // ═══════════════════════════════════════════════════════
-
   {
     "id": "inject-greeting-random",
     "type": "inject",
@@ -246,7 +226,7 @@
     "type": "function",
     "z": "tab-parking-test",
     "name": "Random Greeting Generator",
-    "func": "const texts  = ['Selamat Datang', 'Hati-hati di Jalan', 'Terima Kasih', 'Selamat Bekerja', 'Semangat!', 'Have a Nice Day'];\nconst colors = ['white', 'yellow', 'cyan'];\nconst text   = texts[Math.floor(Math.random() * texts.length)];\nconst color  = colors[Math.floor(Math.random() * colors.length)];\nconst scroll = text.length > 10;\n\nmsg.topic   = 'parking/gate-01/greeting';\nmsg.payload = JSON.stringify({ text, scroll, color });\nreturn msg;",
+    "func": "const texts  = ['Selamat Datang', 'Hati-hati di Jalan', 'Terima Kasih', 'Selamat Bekerja', 'Semangat!', 'Have a Nice Day'];\nconst colors = ['white', 'yellow', 'cyan'];\nconst text   = texts[Math.floor(Math.random() * texts.length)];\nconst color  = colors[Math.floor(Math.random() * colors.length)];\nconst scroll = text.length > 10;\nmsg.topic   = 'parking/gate-01/greeting';\nmsg.payload = JSON.stringify({ text: text, scroll: scroll, color: color });\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "x": 360,
@@ -269,7 +249,7 @@
     "id": "mqtt-out-greeting",
     "type": "mqtt out",
     "z": "tab-parking-test",
-    "name": "→ parking/gate-01/greeting",
+    "name": "parking/gate-01/greeting",
     "topic": "",
     "qos": "0",
     "retain": false,
@@ -278,11 +258,6 @@
     "y": 480,
     "wires": []
   },
-
-  // ═══════════════════════════════════════════════════════
-  // SECTION 4: RESET
-  // ═══════════════════════════════════════════════════════
-
   {
     "id": "inject-reset",
     "type": "inject",
@@ -301,7 +276,7 @@
     "id": "mqtt-out-reset",
     "type": "mqtt out",
     "z": "tab-parking-test",
-    "name": "→ parking/gate-01/reset",
+    "name": "parking/gate-01/reset",
     "topic": "parking/gate-01/reset",
     "qos": "0",
     "retain": false,
@@ -310,11 +285,6 @@
     "y": 620,
     "wires": []
   },
-
-  // ═══════════════════════════════════════════════════════
-  // SECTION 5: CONFIG UPDATE
-  // ═══════════════════════════════════════════════════════
-
   {
     "id": "inject-config",
     "type": "inject",
@@ -345,7 +315,7 @@
     "id": "mqtt-out-config",
     "type": "mqtt out",
     "z": "tab-parking-test",
-    "name": "→ parking/gate-01/config",
+    "name": "parking/gate-01/config",
     "topic": "",
     "qos": "0",
     "retain": false,
