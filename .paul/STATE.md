@@ -46,14 +46,15 @@ PLAN ──▶ APPLY ──▶ UNIFY
 | ArduinoOTA.handle() WiFi-guarded | Clean no-op when offline | 2026-03-09 |
 
 ### Deferred Issues
-| Issue | Origin | Effort | Revisit |
-|-------|--------|--------|---------|
-| `pio run` gagal Python 3.14 vs PlatformIO | 01-01 | M | Downgrade Python ke 3.12 — MUST FIX before flash |
-| esp_task_wdt_init() API mismatch (ESP-IDF v5.x) | 04-01 | S | Verify/update API before flash |
+None — all resolved.
+
+| Issue | Resolution | Date |
+|-------|-----------|------|
+| `pio run` gagal Python 3.14 vs PlatformIO | Use `~/.platformio/penv/bin/platformio run` directly | 2026-03-09 |
+| esp_task_wdt_init() API mismatch (ESP-IDF v5.x) | Fixed in commit — updated to ESP-IDF v5.x struct API | 2026-03-09 |
 
 ### Blockers/Concerns
-- Python 3.14 vs PlatformIO: build CLI tidak bisa diverifikasi — perlu diselesaikan sebelum flash.
-- esp_task_wdt_init(30, true) — new ESP-IDF v5.x API may need struct config parameter.
+None — firmware ready for flash.
 
 ## Phase 1 Summary (apa yang dibangun)
 - **01-01**: GateState struct, 4 MQTT topic helpers, mqttCallback routing
@@ -78,7 +79,7 @@ PLAN ──▶ APPLY ──▶ UNIFY
 
 Last session: 2026-03-09
 Stopped at: v0.2 milestone complete
-Next action: Resolve Python 3.14/PlatformIO, verify esp_task_wdt_init() API, then flash to hardware
+Next action: Flash to hardware — no blockers remaining. Or define v0.3 milestone for next features.
 Resume file: .paul/ROADMAP.md
 
 ---

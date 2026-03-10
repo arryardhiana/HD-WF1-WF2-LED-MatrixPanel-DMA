@@ -422,19 +422,52 @@ void renderPanels() {
     targetSetTextSize(1);
   }
 
-  // P4 (row 3): greeting — color + optional scroll
+  // P4 (row 3): denied override OR scanning (blank) OR greeting — color + optional scroll
   {
     targetSetTextDefaults();
-    targetSetTextColor(greetingColorToColor565(gGate.greetingColor));
-    if (gGate.greetingScroll) {
+    if (gGate.status == "denied") {
+      // Show instruction to use QR code app when access is denied
+      targetSetTextColor(dma_display->color565(255, 80, 0)); // orange-red
       targetSetCursor(gGreetingScrollX, PANEL_RES_Y * 3 + 12);
-      targetPrint(gGate.greeting);
+      targetPrint("Gunakan QRCode SAUNPAD App");
+    } else if (gGate.status == "scanning") {
+      // P4 cleared during scanning — area stays black from targetFillScreen(0) above
     } else {
-      // Clamp x to 0 if text wider than panel — left-align instead of centering off-screen
-      const int greetW = static_cast<int>(gGate.greeting.length()) * 6;
-      const int greetX = max(0, (PANEL_RES_X - greetW) / 2);
-      targetSetCursor(greetX, PANEL_RES_Y * 3 + 12);
-      targetPrint(gGate.greeting);
+      targetSetTextColor(greetingColorToColor565(gGate.greetingColor));
+      if (gGate.greetingScroll) {
+        targetSetCursor(gGreetingScrollX, PANEL_RES_Y * 3 + 12);
+        targetPrint(gGate.greeting);
+      } else {
+        const String& text = gGate.greeting;
+        const int textW = static_cast<int>(text.length()) * 6;
+        if (textW <= PANEL_RES_X) {
+          // Fits on one line — center it
+          const int greetX = (PANEL_RES_X - textW) / 2;
+          targetSetCursor(greetX, PANEL_RES_Y * 3 + 12);
+          targetPrint(text);
+        } else {
+          // Split at last space at or before midpoint → 2 centered lines
+          int splitIdx = -1;
+          const int mid = text.length() / 2;
+          for (int i = mid; i >= 0; i--) {
+            if (text[i] == ' ') { splitIdx = i; break; }
+          }
+          if (splitIdx < 0) {
+            // No space — left-align single line (clipped rather than off-screen)
+            targetSetCursor(0, PANEL_RES_Y * 3 + 12);
+            targetPrint(text);
+          } else {
+            const String line1 = text.substring(0, splitIdx);
+            const String line2 = text.substring(splitIdx + 1);
+            const int x1 = max(0, (PANEL_RES_X - (int)line1.length() * 6) / 2);
+            const int x2 = max(0, (PANEL_RES_X - (int)line2.length() * 6) / 2);
+            targetSetCursor(x1, PANEL_RES_Y * 3 + 6);
+            targetPrint(line1);
+            targetSetCursor(x2, PANEL_RES_Y * 3 + 20);
+            targetPrint(line2);
+          }
+        }
+      }
     }
   }
 }

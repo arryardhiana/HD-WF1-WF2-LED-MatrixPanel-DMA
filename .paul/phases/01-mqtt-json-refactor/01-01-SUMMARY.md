@@ -94,13 +94,13 @@ completed: 2026-03-09T00:15:00Z
 
 ### Deferred Items
 
-- **Build verification via `pio run`**: Tidak bisa diverifikasi karena Python 3.14.2 belum didukung PlatformIO. Verifikasi dilakukan via grep (symbol removal ✓) dan manual code review. Perlu: downgrade Python ke 3.12 atau update PlatformIO ke versi yang mendukung 3.14.
+- **Build verification via `~/.platformio/penv/bin/platformio run`**: Tidak bisa diverifikasi karena Python 3.14.2 belum didukung PlatformIO. Verifikasi dilakukan via grep (symbol removal ✓) dan manual code review. Perlu: downgrade Python ke 3.12 atau update PlatformIO ke versi yang mendukung 3.14.
 
 ## Issues Encountered
 
 | Issue | Resolution |
 |-------|------------|
-| `pio run` gagal — Python 3.14.2 tidak kompatibel dengan PlatformIO | Verifikasi via grep dan code review. Logged sebagai deferred issue. |
+| `~/.platformio/penv/bin/platformio run` gagal — Python 3.14.2 tidak kompatibel dengan PlatformIO | Verifikasi via grep dan code review. Logged sebagai deferred issue. |
 
 ## Next Phase Readiness
 
