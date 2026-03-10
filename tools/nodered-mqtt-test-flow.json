@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Parking Gate MQTT Test",
     "disabled": false,
-    "info": "Test flow untuk parking gate LED matrix display.\nMQTT broker: 10.10.6.99:1883\nGate ID: gate-01"
+    "info": "Test flow untuk parking gate LED matrix display.\nMQTT broker: 10.10.6.99:1883 | Gate ID: gate-01\n\nDisplay behavior:\n- P1: Traffic lamp (merah=denied, kuning=scanning, hijau=granted, dim=idle)\n- P2 baris 3: anpr_status | 'Scanning..' saat scanning | 'NO WIFI' / 'OFFLINE' saat putus\n- P3: Nomor plat besar (kosong saat idle)\n- P4: Greeting (idle/granted) | blank (scanning) | Gunakan QRCODE SAUNPAD (denied) | Hubungi UPT Lingkungan (offline)\n\nanpr_status valid: detected | not_detected"
   },
   {
     "id": "mqtt-broker-parking",
@@ -71,7 +71,7 @@
     "type": "function",
     "z": "tab-parking-test",
     "name": "Random Event Generator",
-    "func": "const prefixes = ['B', 'D', 'F', 'E', 'Z', 'H', 'G', 'L', 'W', 'N', 'P', 'S', 'T', 'R', 'K'];\nconst suffixes = ['ABC', 'BCD', 'CDE', 'DEF', 'EFG', 'XYZ', 'AAA', 'BBB', 'RFQ', 'ZZZ', 'ASD', 'QWE'];\nconst prefix = prefixes[Math.floor(Math.random() * prefixes.length)];\nconst number = Math.floor(Math.random() * 8999) + 1000;\nconst suffix = suffixes[Math.floor(Math.random() * suffixes.length)];\nconst plate  = prefix + ' ' + number + ' ' + suffix;\n\nconst statuses = ['granted', 'denied', 'scanning', 'idle'];\nconst weights  = [4, 3, 2, 1];\nconst totalW   = weights.reduce((a, b) => a + b, 0);\nlet rand = Math.random() * totalW, statusIdx = 0;\nfor (let i = 0; i < weights.length; i++) {\n    rand -= weights[i];\n    if (rand <= 0) { statusIdx = i; break; }\n}\nconst status = statuses[statusIdx];\n\nconst anprOptions = ['detected', 'not_detected'];\nconst anpr_status = anprOptions[Math.floor(Math.random() * anprOptions.length)];\n\nconst payload = {\n    status:      status,\n    plate:       (status === 'idle') ? '' : plate,\n    anpr_status: anpr_status,\n    gate_name:   'Gate A',\n    timestamp:   Math.floor(Date.now() / 1000)\n};\n\nmsg.topic   = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(payload);\nnode.warn('[event] status=' + status + ' plate=' + payload.plate + ' anpr=' + anpr_status);\nreturn msg;",
+    "func": "const prefixes = ['B', 'D', 'F', 'E', 'Z', 'H', 'G', 'L', 'W', 'N', 'P', 'S', 'T', 'R', 'K'];\nconst suffixes = ['ABC', 'BCD', 'CDE', 'DEF', 'EFG', 'XYZ', 'AAA', 'BBB', 'RFQ', 'ZZZ', 'ASD', 'QWE'];\nconst prefix = prefixes[Math.floor(Math.random() * prefixes.length)];\nconst number = Math.floor(Math.random() * 8999) + 1000;\nconst suffix = suffixes[Math.floor(Math.random() * suffixes.length)];\nconst plate  = prefix + ' ' + number + ' ' + suffix;\n\nconst statuses = ['granted', 'denied', 'scanning', 'idle'];\nconst weights  = [4, 3, 2, 1];\nconst totalW   = weights.reduce((a, b) => a + b, 0);\nlet rand = Math.random() * totalW, statusIdx = 0;\nfor (let i = 0; i < weights.length; i++) {\n    rand -= weights[i];\n    if (rand <= 0) { statusIdx = i; break; }\n}\nconst status = statuses[statusIdx];\n\nconst anpr_status = (status === 'scanning' || status === 'idle') ? '' : 'detected';\n\nconst payload = {\n    status:      status,\n    plate:       (status === 'idle' || status === 'scanning') ? '' : plate,\n    anpr_status: anpr_status,\n    gate_name:   'Gate A',\n    timestamp:   Math.floor(Date.now() / 1000)\n};\n\nmsg.topic   = 'parking/gate-01/event';\nmsg.payload = JSON.stringify(payload);\nnode.warn('[event] status=' + status + ' plate=' + payload.plate + ' anpr=' + anpr_status);\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -147,7 +147,7 @@
     "props": [{ "p": "payload" }],
     "repeat": "",
     "once": false,
-    "payload": "{\"status\":\"scanning\",\"plate\":\"\",\"anpr_status\":\"not_detected\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
+    "payload": "{\"status\":\"scanning\",\"plate\":\"\",\"anpr_status\":\"\",\"gate_name\":\"Gate A\",\"timestamp\":0}",
     "payloadType": "json",
     "x": 140,
     "y": 300,
