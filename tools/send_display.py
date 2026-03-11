@@ -27,7 +27,13 @@ import json
 import sys
 import time
 
-CANDIDATE_PORTS = ["/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1"]
+CANDIDATE_PORTS = [
+    # macOS
+    "/dev/tty.usbmodem101", "/dev/tty.usbmodem1101", "/dev/tty.usbmodem201",
+    "/dev/tty.SLAB_USBtoUART", "/dev/tty.usbserial-0001", "/dev/tty.usbserial-1",
+    # Linux
+    "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1",
+]
 
 
 def find_port():
