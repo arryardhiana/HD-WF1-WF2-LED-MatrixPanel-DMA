@@ -145,6 +145,7 @@ static int16_t       gGreetingScrollX = PANEL_RES_X; // starts at right edge of 
 static unsigned long gLastScrollMs    = 0;
 
 static unsigned long gLastEventMs = 0;          // millis() of last non-idle event (for display timeout)
+static String        gSerialBuffer = "";         // accumulates serial input until newline
 static bool          gMqttWasConnected   = false; // tracks prior MQTT state for offline indicator
 static unsigned long gMqttDisconnectedMs = 0;     // millis() when MQTT first lost connection
 static bool          gOtaInitialized     = false; // ArduinoOTA.begin() called once after WiFi
@@ -915,6 +916,32 @@ void loop() {
       gGate.anprStatus = "";
       redrawNeeded     = true;
       Serial.printf("[timeout] display reset to idle after %us\n", gDisplayTimeout);
+    }
+  }
+
+  // Serial command input — format: cmd:json\n
+  // Compatible with: printf 'event:{...}\n' > /dev/ttyUSB0
+  while (Serial.available()) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\n') {
+      gSerialBuffer.trim();
+      if (gSerialBuffer.length() > 0) {
+        const int colonIdx = gSerialBuffer.indexOf(':');
+        if (colonIdx < 0) {
+          Serial.println("[serial] invalid format, expected: <cmd>:<json>");
+        } else {
+          const String cmd     = gSerialBuffer.substring(0, colonIdx);
+          const String payload = gSerialBuffer.substring(colonIdx + 1);
+          if      (cmd == "event")    handleEventTopic(payload);
+          else if (cmd == "greeting") handleGreetingTopic(payload);
+          else if (cmd == "config")   handleConfigTopic(payload);
+          else if (cmd == "reset")    handleResetTopic(payload);
+          else Serial.printf("[serial] unknown command: %s\n", cmd.c_str());
+        }
+      }
+      gSerialBuffer = "";
+    } else if (c != '\r') {
+      gSerialBuffer += c;
     }
   }
 
