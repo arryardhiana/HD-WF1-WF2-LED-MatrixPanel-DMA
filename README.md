@@ -14,6 +14,7 @@ Firmware untuk **Huidu WF1/WF2** (ESP32-S2/S3) yang menampilkan status akses ken
 - [MQTT Topics & Payload](#mqtt-topics--payload)
 - [Tampilan per Panel](#tampilan-per-panel)
 - [Testing dengan Node-RED](#testing-dengan-node-red)
+- [Kontrol via USB Serial](#kontrol-via-usb-serial)
 - [Libraries](#libraries)
 
 ---
@@ -333,6 +334,141 @@ Contoh: D 4521 BCD, B 1337 XYZ, H 9001 ASD
 
 ---
 
+## Kontrol via USB Serial
+
+Display dapat dikontrol langsung via kabel USB (kabel yang sama untuk flashing) **tanpa WiFi dan tanpa MQTT broker**. Cocok untuk testing di meja atau debugging lapangan.
+
+**Batasan kabel USB:**
+| Tipe | Panjang Maks |
+|------|-------------|
+| Passive (biasa) | 5 meter |
+| Active extension | 25 meter |
+
+---
+
+### Protokol Serial
+
+Format: `<command>:<json_payload>` diakhiri newline (`\n`), baud rate `115200`.
+
+| Command | Fungsi |
+|---------|--------|
+| `event` | Event akses kendaraan |
+| `greeting` | Update teks P4 |
+| `config` | Update konfigurasi |
+| `reset` | Reset display ke idle |
+
+---
+
+### Opsi A — Python CLI (`tools/send_display.py`)
+
+**Install dependency (sekali saja):**
+```bash
+pip install pyserial
+# macOS dengan Homebrew Python:
+pip install pyserial --break-system-packages
+```
+
+**Event akses kendaraan:**
+```bash
+# Granted
+python3 tools/send_display.py event --status granted --plate "D 1234 ABC" --anpr detected
+
+# Denied
+python3 tools/send_display.py event --status denied --plate "B 9999 XYZ" --anpr detected
+
+# Scanning (kamera sedang proses)
+python3 tools/send_display.py event --status scanning
+
+# Idle (reset ke standby)
+python3 tools/send_display.py event --status idle
+```
+
+**Update greeting P4:**
+```bash
+# Teks pendek, warna kuning
+python3 tools/send_display.py greeting --text "Selamat Datang" --color yellow
+
+# Teks panjang dengan scroll
+python3 tools/send_display.py greeting --text "Selamat Datang di Gedung Utama" --scroll
+
+# Warna cyan
+python3 tools/send_display.py greeting --text "Have a Nice Day" --color cyan
+```
+
+**Konfigurasi:**
+```bash
+# Ubah brightness
+python3 tools/send_display.py config --brightness 128
+
+# Ubah timeout idle (detik)
+python3 tools/send_display.py config --timeout 10
+
+# Ubah nama gate
+python3 tools/send_display.py config --gate-name "Gate B"
+
+# Kombinasi sekaligus
+python3 tools/send_display.py config --brightness 50 --timeout 5 --gate-name "Gate C"
+```
+
+**Reset display:**
+```bash
+python3 tools/send_display.py reset
+```
+
+**Specify port manual (jika auto-detect gagal):**
+```bash
+# macOS
+python3 tools/send_display.py --port /dev/tty.usbmodem101 event --status granted --plate "D 1234 ABC"
+
+# Linux
+python3 tools/send_display.py --port /dev/ttyUSB0 event --status granted --plate "D 1234 ABC"
+```
+
+Auto-detect port mencoba (berurutan): `/dev/tty.usbmodem101`, `/dev/tty.usbmodem1101`, `/dev/tty.SLAB_USBtoUART`, `/dev/ttyUSB0`, `/dev/ttyACM0`.
+
+---
+
+### Opsi B — 1-line CLI (tanpa Python)
+
+Tidak perlu install apapun — langsung kirim ke port serial.
+
+```bash
+# macOS — cari port dulu:
+ls /dev/tty.*
+# biasanya: /dev/tty.usbmodem101
+
+# Linux — port biasanya:
+# /dev/ttyUSB0 atau /dev/ttyACM0
+
+# Granted
+printf 'event:{"status":"granted","plate":"D 1234 ABC","anpr_status":"detected","gate_name":"Gate A","timestamp":0}\n' > /dev/tty.usbmodem101
+
+# Denied
+printf 'event:{"status":"denied","plate":"B 9999 XYZ","anpr_status":"detected","gate_name":"Gate A","timestamp":0}\n' > /dev/tty.usbmodem101
+
+# Scanning
+printf 'event:{"status":"scanning","plate":"","anpr_status":"","gate_name":"Gate A","timestamp":0}\n' > /dev/tty.usbmodem101
+
+# Idle
+printf 'event:{"status":"idle","plate":"","anpr_status":"","gate_name":"Gate A","timestamp":0}\n' > /dev/tty.usbmodem101
+
+# Update greeting
+printf 'greeting:{"text":"Selamat Datang","scroll":false,"color":"yellow"}\n' > /dev/tty.usbmodem101
+
+# Scroll teks panjang
+printf 'greeting:{"text":"Selamat Datang di Gedung Utama","scroll":true,"color":"white"}\n' > /dev/tty.usbmodem101
+
+# Update brightness
+printf 'config:{"brightness":128}\n' > /dev/tty.usbmodem101
+
+# Reset
+printf 'reset:{}\n' > /dev/tty.usbmodem101
+```
+
+> MQTT dan serial berjalan **paralel** — keduanya bisa digunakan sekaligus tanpa konflik.
+
+---
+
 ## Libraries
 
 | Library | Versi | Fungsi |
@@ -347,4 +483,4 @@ Contoh: D 4521 BCD, B 1337 XYZ, H 9001 ASD
 
 ---
 
-*Last updated: 2026-03-10*
+*Last updated: 2026-03-11*
